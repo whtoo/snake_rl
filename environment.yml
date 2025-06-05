@@ -1,0 +1,24 @@
+name: rl_atari
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pytorch
+  - torchvision
+  - torchaudio
+  - cpuonly
+  - jupyter
+  - matplotlib
+  - numpy
+  - pip:
+    - gymnasium[atari,accept-rom-license]
+    - opencv-python
+    - stable-baselines3
+    - tensorboard
+    - ale-py
+    - autorom[accept-rom-license]
+    - pygame
+    - tqdm
