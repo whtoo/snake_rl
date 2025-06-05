@@ -1,11 +1,8 @@
 @echo off
-:: 设置代码页为 UTF-8 以支持中文字符
-chcp 65001 >nul
-
 :: 强化学习训练启动脚本
 :: 使用方法: run_training.bat [模型类型] [回合数]
 
-setlocal EnableDelayedExpansion
+setlocal
 
 :: 默认参数
 if "%1"=="" (set MODEL_TYPE=dqn) else (set MODEL_TYPE=%1)
