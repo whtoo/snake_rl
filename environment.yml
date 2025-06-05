@@ -2,8 +2,7 @@ name: snake_rl
 channels:
   - conda-forge
   - defaults
-  # 考虑添加 'pytorch' 频道以获得官方的 PyTorch conda 包，如果想从 conda 安装 PyTorch
-  # - pytorch
+  - pytorch # 添加 pytorch 频道以获得官方的 PyTorch CPU conda 包
 dependencies:
   - python=3.10
   - pip
@@ -12,10 +11,8 @@ dependencies:
   - jupyter
   - tensorboard
   - pip:
-    - torch        # 安装 PyTorch 核心库
-    - torchvision  # 您已包含，确保版本与 torch 兼容
-    - torchaudio   # 您已包含，确保版本与 torch 兼容
-    - torch-directml # 安装 DirectML 支持插件
+    - torch==2.3.0  # 指定与DirectML兼容的版本
+    - torch-directml
     - gymnasium[atari,accept-rom-license]
     - ale-py
     - opencv-python
