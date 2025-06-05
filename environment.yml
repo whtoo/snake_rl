@@ -1,24 +1,23 @@
-name: rl_atari
+name: snake_rl
 channels:
-  - pytorch
   - conda-forge
   - defaults
+  # 考虑添加 'pytorch' 频道以获得官方的 PyTorch conda 包，如果想从 conda 安装 PyTorch
+  # - pytorch
 dependencies:
   - python=3.10
   - pip
-  - pytorch
-  - torchvision
-  - torchaudio
-  - cpuonly
-  - jupyter
-  - matplotlib
   - numpy
+  - matplotlib
+  - jupyter
+  - tensorboard
   - pip:
+    - torch        # 安装 PyTorch 核心库
+    - torchvision  # 您已包含，确保版本与 torch 兼容
+    - torchaudio   # 您已包含，确保版本与 torch 兼容
+    - torch-directml # 安装 DirectML 支持插件
     - gymnasium[atari,accept-rom-license]
-    - opencv-python
-    - stable-baselines3
-    - tensorboard
     - ale-py
-    - autorom[accept-rom-license]
-    - pygame
+    - opencv-python
+    - pillow
     - tqdm
