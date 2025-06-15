@@ -18,7 +18,7 @@ def parse_args():
     """
     parser = argparse.ArgumentParser(description="DQN训练脚本")
     parser.add_argument("--env", type=str, default="ALE/Assault-v5", help="Gym环境名称")
-    parser.add_argument("--model", type=str, default="dqn", choices=["dqn", "dueling", "rainbow"], help="模型类型")
+    parser.add_argument("--model", type=str, default="rainbow", choices=["dqn", "dueling", "rainbow"], help="模型类型")
     parser.add_argument("--episodes", type=int, default=1000, help="训练回合数")
     parser.add_argument("--buffer_size", type=int, default=100000, help="经验回放缓冲区大小")
     parser.add_argument("--batch_size", type=int, default=32, help="训练批量大小")
@@ -100,7 +100,8 @@ def train(args):
 
     device = torch.device(device_str)
     print(f"Using device: {device}")
-    
+    print(f"Choose model: {args.model}")
+
     # 创建模型
     input_shape = env.observation_space.shape
     n_actions = env.action_space.n
