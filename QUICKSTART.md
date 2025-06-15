@@ -59,8 +59,11 @@ python src/train.py
 # 使用优先经验回放训练
 python src/train.py --prioritized_replay --episodes 2000
 
-# 训练 Rainbow DQN（包含所有高级功能）
-python src/train.py --model rainbow --episodes 2000 --prioritized_replay
+# 训练 Rainbow DQN（推荐配置）
+python src/train.py --model rainbow --episodes 2000 --use_noisy --prioritized_replay
+
+# 训练完整 Rainbow DQN（所有高级功能）
+python src/train.py --model rainbow --episodes 2000 --use_noisy --use_distributional --prioritized_replay --n_step 3
 
 # 训练带多步学习的 DQN
 python src/train.py --n_step 3 --episodes 1500
@@ -68,6 +71,17 @@ python src/train.py --n_step 3 --episodes 1500
 # 训练带噪声网络的 DQN
 python src/train.py --model noisy --episodes 1500
 ```
+
+### Rainbow DQN 参数说明
+Rainbow DQN 支持以下可选参数：
+- `--use_noisy`: 使用噪声网络（默认：True）
+- `--use_distributional`: 使用分布式DQN（默认：False）
+- `--prioritized_replay`: 使用优先经验回放（默认：True）
+- `--n_step`: 多步学习步数（默认：3）
+- `--n_atoms`: 原子数（分布式DQN，默认：51）
+- `--v_min`, `--v_max`: 价值分布范围（分布式DQN，默认：-10,10）
+
+完整参数列表见 `docs/rainbow_usage.md`
 
 ## 3. 监控训练
 

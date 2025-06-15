@@ -16,17 +16,21 @@ Rainbow DQN 实现已完成，集成了所有6个核心组件：
 ### 1. 基础训练
 
 ```bash
-# 训练标准 Rainbow DQN
-python run_training.py rainbow 1000 --use_noisy --prioritized_replay
+# 训练标准 Rainbow DQN（推荐）
+python src/train.py --model rainbow --use_noisy --prioritized_replay --episodes 1000
 
-# 训练分布式 Rainbow DQN
-python run_training.py rainbow 1000 --use_noisy --use_distributional --prioritized_replay
+# 训练分布式 Rainbow DQN（完整版本）
+python src/train.py --model rainbow --use_noisy --use_distributional --prioritized_replay --episodes 1000
+
+# 使用启动脚本（更简便）
+./run_training.sh rainbow 1000
 ```
 
 ### 2. 自定义参数
 
 ```bash
-python run_training.py rainbow 1000 \
+# 完整的 Rainbow DQN 配置
+python src/train.py --model rainbow \
     --use_noisy \
     --use_distributional \
     --prioritized_replay \
@@ -35,7 +39,11 @@ python run_training.py rainbow 1000 \
     --v_min -10 \
     --v_max 10 \
     --lr 1e-4 \
-    --batch_size 32
+    --batch_size 32 \
+    --episodes 2000
+
+# 使用 Python 启动器
+python run_training.py rainbow 1000 --use_noisy --use_distributional --prioritized_replay
 ```
 
 ## 参数说明
