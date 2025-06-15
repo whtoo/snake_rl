@@ -23,11 +23,11 @@ def test_noisy_linear():
     output1 = layer(x)
     output2 = layer(x)
     
-    # 噪声网络每次前向传播应该产生不同的结果
-    assert not torch.equal(output1, output2), "噪声网络输出应该不同"
+    # 噪声网络在没有重置噪声的情况下，连续调用应该产生相同的结果
+    assert torch.equal(output1, output2), "噪声网络在没有重置噪声的情况下，连续调用输出应该相同"
     
     # 测试重置噪声
-    layer.reset_noise()
+    layer.sample_noise() # Correct method name
     output3 = layer(x)
     assert not torch.equal(output1, output3), "重置噪声后输出应该不同"
     
@@ -75,9 +75,10 @@ def test_rainbow_dqn():
     
     output1 = model_noisy(x)
     output2 = model_noisy(x)
-    assert not torch.equal(output1, output2), "噪声网络输出应该不同"
+    # 噪声网络在没有重置噪声的情况下，连续调用应该产生相同的结果
+    assert torch.equal(output1, output2), "RainbowDQN (noisy) 在没有重置噪声的情况下，连续调用输出应该相同"
     
-    model_noisy.reset_noise()
+    model_noisy.sample_noise() # Correct method name
     output3 = model_noisy(x)
     assert not torch.equal(output1, output3), "重置噪声后输出应该不同"
     
