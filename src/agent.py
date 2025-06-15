@@ -1,7 +1,5 @@
 import numpy as np
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 import random
 from collections import deque, namedtuple
@@ -43,10 +41,14 @@ class ReplayBuffer:
         
         # 将经验批量转换为张量形式
         states = torch.cat([torch.FloatTensor(exp.state).unsqueeze(0) for exp in experiences])
-        actions = torch.tensor([exp.action for exp in experiences], dtype=torch.long).unsqueeze(1)
-        rewards = torch.tensor([exp.reward for exp in experiences], dtype=torch.float).unsqueeze(1)
-        next_states = torch.cat([torch.FloatTensor(exp.next_state).unsqueeze(0) for exp in experiences])
-        dones = torch.tensor([exp.done for exp in experiences], dtype=torch.float).unsqueeze(1)
+        actions = torch.tensor([
+            exp.action for exp in experiences], dtype=torch.long).unsqueeze(1)
+        rewards = torch.tensor([
+            exp.reward for exp in experiences], dtype=torch.float).unsqueeze(1)
+        next_states = torch.cat([
+            torch.FloatTensor(exp.next_state).unsqueeze(0) for exp in experiences])
+        dones = torch.tensor([
+            exp.done for exp in experiences], dtype=torch.float).unsqueeze(1)
         
         return states, actions, rewards, next_states, dones
     
@@ -751,7 +753,7 @@ class RainbowAgent(DQNAgent):
 
             # Calculate contributions for non-equal l and u
             m_l_contrib = next_dist_target * (u.float() - b) # Shape (batch_size, n_atoms)
-            m_u_contrib = next_dist_target * (b - l.float()) # Shape (batch_size, n_atoms)
+            m_u_contrib = next_dist_target * (b - l.float())  # Shape (batch_size, n_atoms)
 
             # Zero out contributions where l == u (i.e., where ne_mask is False)
             m_l_contrib_ne = torch.where(ne_mask, m_l_contrib, torch.zeros_like(m_l_contrib))
