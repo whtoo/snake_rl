@@ -708,8 +708,8 @@ class RainbowAgent(DQNAgent):
             
             # 分布投影
             b = (target_support - self.v_min) / self.delta_z
-            l = b.floor().long()
-            u = b.ceil().long()
+            lower_indices = b.floor().long()
+            upper_indices = b.ceil().long()
 
             # Correct projection for cases where l == u (i.e., b is an integer)
             # This ensures probability mass is not lost when Tz falls exactly on an atom.
@@ -720,8 +720,8 @@ class RainbowAgent(DQNAgent):
             # provided they don't go out of bounds [0, n_atoms-1].
             
             # Only adjust l if it's equal to u AND u is not already 0 (so l can be moved to l-1)
-            l_eq_u_and_u_gt_0 = (l == u) & (u > 0)
-            l[l_eq_u_and_u_gt_0] -= 1
+            l_eq_u_and_u_gt_0 = (lower_indices == upper_indices) & (upper_indices > 0)
+            lower_indices[l_eq_u_and_u_gt_0] -= 1
 
             # Only adjust u if it's equal to l AND l is not already n_atoms-1 (so u can be moved to u+1)
             # Note: the original l (before adjustment above) should be used for u's condition.
@@ -746,21 +746,21 @@ class RainbowAgent(DQNAgent):
             # The logic `l[(u > 0) & (l == u)] -= 1` and `u[(l < (self.n_atoms - 1)) & (l == u)] += 1` (using original l for u's condition) handles this.
 
             # Let's use a mask for l==u elements.
-            eq_mask = (l == u)
+            eq_mask = (lower_indices == upper_indices)
             ne_mask = ~eq_mask
 
             target_dist = torch.zeros_like(next_dist_target, device=self.device) # Shape (batch_size, n_atoms)
 
             # Calculate contributions for non-equal l and u
-            m_l_contrib = next_dist_target * (u.float() - b) # Shape (batch_size, n_atoms)
-            m_u_contrib = next_dist_target * (b - l.float())  # Shape (batch_size, n_atoms)
+            m_l_contrib = next_dist_target * (upper_indices.float() - b) # Shape (batch_size, n_atoms)
+            m_u_contrib = next_dist_target * (b - lower_indices.float())  # Shape (batch_size, n_atoms)
 
             # Zero out contributions where l == u (i.e., where ne_mask is False)
             m_l_contrib_ne = torch.where(ne_mask, m_l_contrib, torch.zeros_like(m_l_contrib))
             m_u_contrib_ne = torch.where(ne_mask, m_u_contrib, torch.zeros_like(m_u_contrib))
 
-            target_dist.scatter_add_(1, l, m_l_contrib_ne)
-            target_dist.scatter_add_(1, u, m_u_contrib_ne)
+            target_dist.scatter_add_(1, lower_indices, m_l_contrib_ne)
+            target_dist.scatter_add_(1, upper_indices, m_u_contrib_ne)
 
             # Handle equal l and u (b is integer): add full probability to that atom
             if eq_mask.any():
@@ -771,7 +771,7 @@ class RainbowAgent(DQNAgent):
                 # but here, for each batch item, l[eq_mask] should point to a unique atom for that batch item's sum.
                 # This is fine as we are adding the specific probability next_dist_target[eq_mask_indices] to target_dist[eq_mask_indices, l[eq_mask_indices]].
                 # The previous scatter_adds for m_l_contrib_ne and m_u_contrib_ne would have added 0 at these eq_mask locations.
-                target_dist.scatter_add_(1, l, src_eq) # Use full l, src_eq has zeros where eq_mask is false.
+                target_dist.scatter_add_(1, lower_indices, src_eq) # Use full l, src_eq has zeros where eq_mask is false.
 
         # 计算KL散度损失
         # current_dist here should be log probabilities of selected actions
