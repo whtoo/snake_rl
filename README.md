@@ -27,7 +27,7 @@
 5. [x] 实现训练脚本
 6. [x] 实现评估脚本
 7. [x] 创建演示笔记本
-8. [ ] 测试和优化
+8. [x] 测试和优化
 
 ## 环境配置
 
@@ -93,15 +93,17 @@ jupyter notebook notebooks/demo.ipynb
 - [x] 模型保存和加载
 - [x] 视频录制功能
 - [x] 交互式演示笔记本
+- [x] 多步学习 (N-step Learning)
+- [x] Rainbow DQN (完整实现)
+- [x] 噪声网络 (Noisy Networks)
+- [x] 分布式Q学习 (Distributional DQN/C51)
+- [x] 超参数优化支持
 
 ## 待办事项
 
-- [ ] 添加多步学习 (N-step Learning)
-- [ ] 实现 Rainbow DQN
 - [ ] 添加分布式训练支持
-- [ ] 优化超参数
-- [ ] 添加更多游戏环境支持
 - [ ] 实现模型压缩和加速
+- [ ] 添加更多游戏环境支持
 
 ## 训练参数说明
 
