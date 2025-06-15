@@ -84,7 +84,7 @@ def evaluate_agent(args):
     # 评估循环
     for episode in tqdm(range(1, args.n_episodes + 1)):
         state, _ = env.reset()
-        episode_reward = 0
+        episode_reward = 0.0
         episode_length = 0
         frames = []
         
@@ -106,7 +106,7 @@ def evaluate_agent(args):
             
             # 更新状态和统计
             state = next_state
-            episode_reward += reward
+            episode_reward += float(reward)
             episode_length += 1
             
             # 如果需要渲染，显示游戏画面

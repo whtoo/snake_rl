@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 import random
 from collections import deque, namedtuple
@@ -242,11 +243,14 @@ class DQNAgent:
             return 0.0
         
         # 从经验回放缓冲区采样
-        if self.prioritized_replay:
+        if isinstance(self.memory, PrioritizedReplayBuffer):
+            # 优先经验回放返回7个值
             states, actions, rewards, next_states, dones, indices, weights = self.memory.sample(self.batch_size)
             weights = weights.to(self.device)
         else:
+            # 普通经验回放返回5个值
             states, actions, rewards, next_states, dones = self.memory.sample(self.batch_size)
+            indices = None
             weights = torch.ones_like(rewards).to(self.device)
         
         # 将数据转移到设备
@@ -274,8 +278,8 @@ class DQNAgent:
         loss = (td_errors * weights).mean()
         
         # 更新优先级 (如果使用优先经验回放)
-        if self.prioritized_replay:
-            priorities = td_errors.detach().cpu().numpy() + 1e-6  # 添加小值防止优先级为0
+        if isinstance(self.memory, PrioritizedReplayBuffer) and indices is not None:
+            priorities = td_errors.detach().cpu().numpy().flatten() + 1e-6  # 添加小值防止优先级为0
             self.memory.update_priorities(indices, priorities)
         
         # 梯度下降
@@ -313,3 +317,317 @@ class DQNAgent:
         self.target_model.load_state_dict(checkpoint['target_model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.steps_done = checkpoint['steps_done']
+
+
+class NStepBuffer:
+    """
+    N步学习缓冲区
+    存储n步序列并计算n步回报
+    """
+    def __init__(self, n_step=3, gamma=0.99):
+        """
+        初始化N步缓冲区
+        
+        参数:
+            n_step: n步学习的步数
+            gamma: 折扣因子
+        """
+        self.n_step = n_step
+        self.gamma = gamma
+        self.buffer = deque(maxlen=n_step)
+    
+    def add(self, state, action, reward, next_state, done):
+        """
+        添加一步经验到缓冲区
+        
+        参数:
+            state: 当前状态
+            action: 执行的动作
+            reward: 获得的奖励
+            next_state: 下一个状态
+            done: 是否结束
+            
+        返回:
+            如果缓冲区满了，返回n步经验；否则返回None
+        """
+        self.buffer.append((state, action, reward, next_state, done))
+        
+        if len(self.buffer) < self.n_step:
+            return None
+        
+        # 计算n步回报
+        n_step_reward = 0
+        for i, (_, _, r, _, _) in enumerate(self.buffer):
+            n_step_reward += (self.gamma ** i) * r
+        
+        # 获取第一步的状态和动作
+        first_state, first_action = self.buffer[0][0], self.buffer[0][1]
+        
+        # 获取最后一步的下一个状态和done标志
+        last_next_state, last_done = self.buffer[-1][3], self.buffer[-1][4]
+        
+        return first_state, first_action, n_step_reward, last_next_state, last_done
+    
+    def get_last_n_step(self):
+        """
+        当游戏结束时，获取缓冲区中剩余的经验
+        """
+        if not self.buffer:
+            return []
+        
+        experiences = []
+        for i in range(len(self.buffer)):
+            # 计算从当前位置开始的n步回报
+            n_step_reward = 0
+            for j in range(i, len(self.buffer)):
+                _, _, reward, _, _ = self.buffer[j]
+                n_step_reward += (self.gamma ** (j - i)) * reward
+            
+            state, action = self.buffer[i][0], self.buffer[i][1]
+            # 使用最后一个状态作为下一个状态
+            next_state, done = self.buffer[-1][3], True
+            
+            experiences.append((state, action, n_step_reward, next_state, done))
+        
+        return experiences
+    
+    def reset(self):
+        """
+        重置缓冲区
+        """
+        self.buffer.clear()
+
+
+class RainbowAgent(DQNAgent):
+    """
+    Rainbow DQN智能体
+    集成了所有Rainbow组件：Double DQN, Dueling DQN, Prioritized Replay,
+    Multi-step Learning, Noisy Networks, Distributional DQN
+    """
+    def __init__(self, model, target_model, env, device,
+                 n_step=3, use_noisy=True, use_distributional=False,
+                 n_atoms=51, v_min=-10, v_max=10, **kwargs):
+        """
+        初始化Rainbow智能体
+        
+        参数:
+            model: 主Q网络 (RainbowDQN)
+            target_model: 目标Q网络
+            env: 游戏环境
+            device: 计算设备
+            n_step: n步学习的步数
+            use_noisy: 是否使用噪声网络
+            use_distributional: 是否使用分布式Q学习
+            n_atoms: 分布式Q学习的原子数量
+            v_min: 值函数的最小值
+            v_max: 值函数的最大值
+            **kwargs: 其他DQN参数
+        """
+        # 如果使用噪声网络，禁用epsilon探索
+        if use_noisy:
+            kwargs['epsilon_start'] = 0.0
+            kwargs['epsilon_final'] = 0.0
+            kwargs['epsilon_decay'] = 1
+        
+        # 默认使用优先经验回放
+        if 'prioritized_replay' not in kwargs:
+            kwargs['prioritized_replay'] = True
+            
+        super().__init__(model, target_model, env, device, **kwargs)
+        
+        self.n_step = n_step
+        self.use_noisy = use_noisy
+        self.use_distributional = use_distributional
+        self.n_atoms = n_atoms
+        self.v_min = v_min
+        self.v_max = v_max
+        
+        # 初始化n步缓冲区
+        self.n_step_buffer = NStepBuffer(n_step, self.gamma)
+        
+        # 分布式Q学习相关
+        if use_distributional:
+            self.delta_z = (v_max - v_min) / (n_atoms - 1)
+            self.support = torch.linspace(v_min, v_max, n_atoms).to(device)
+    
+    def select_action(self, state, evaluate=False):
+        """
+        选择动作
+        """
+        # 如果使用噪声网络，直接使用贪婪策略
+        if self.use_noisy:
+            with torch.no_grad():
+                state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+                
+                if self.use_distributional:
+                    # 分布式Q学习：计算期望Q值
+                    dist = self.model(state_tensor)
+                    dist = F.softmax(dist, dim=2)  # [batch, actions, atoms]
+                    q_values = (dist * self.support).sum(2)  # [batch, actions]
+                else:
+                    q_values = self.model(state_tensor)
+                
+                return q_values.max(1)[1].item()
+        else:
+            # 使用父类的epsilon-greedy策略
+            return super().select_action(state, evaluate)
+    
+    def store_experience(self, state, action, reward, next_state, done):
+        """
+        存储经验到n步缓冲区和回放缓冲区
+        """
+        # 添加到n步缓冲区
+        n_step_exp = self.n_step_buffer.add(state, action, reward, next_state, done)
+        
+        # 如果n步缓冲区满了，将n步经验存入回放缓冲区
+        if n_step_exp is not None:
+            n_state, n_action, n_reward, n_next_state, n_done = n_step_exp
+            self.memory.push(n_state, n_action, n_reward, n_next_state, n_done)
+        
+        # 如果游戏结束，处理缓冲区中剩余的经验
+        if done:
+            remaining_exps = self.n_step_buffer.get_last_n_step()
+            for exp in remaining_exps:
+                exp_state, exp_action, exp_reward, exp_next_state, exp_done = exp
+                self.memory.push(exp_state, exp_action, exp_reward, exp_next_state, exp_done)
+            self.n_step_buffer.reset()
+    
+    def update_model(self):
+        """
+        更新模型参数
+        """
+        # 如果经验不足，不进行更新
+        if len(self.memory) < self.batch_size:
+            return 0.0
+        
+        # 重置噪声网络的噪声
+        if self.use_noisy:
+            self.model.reset_noise()
+            self.target_model.reset_noise()
+        
+        # 从经验回放缓冲区采样
+        if isinstance(self.memory, PrioritizedReplayBuffer):
+            states, actions, rewards, next_states, dones, indices, weights = self.memory.sample(self.batch_size)
+            weights = weights.to(self.device)
+        else:
+            states, actions, rewards, next_states, dones = self.memory.sample(self.batch_size)
+            indices = None
+            weights = torch.ones_like(rewards).to(self.device)
+        
+        # 将数据转移到设备
+        states = states.to(self.device)
+        actions = actions.to(self.device)
+        rewards = rewards.to(self.device)
+        next_states = next_states.to(self.device)
+        dones = dones.to(self.device)
+        
+        if self.use_distributional:
+            loss = self._compute_distributional_loss(states, actions, rewards, next_states, dones, weights)
+        else:
+            loss = self._compute_standard_loss(states, actions, rewards, next_states, dones, weights)
+        
+        # 更新优先级
+        if isinstance(self.memory, PrioritizedReplayBuffer) and indices is not None:
+            # 为了计算TD误差，我们需要重新计算一下
+            with torch.no_grad():
+                if self.use_distributional:
+                    current_dist = self.model(states)
+                    current_dist = F.softmax(current_dist, dim=2)
+                    current_q = (current_dist * self.support).sum(2)
+                    current_q_selected = current_q.gather(1, actions)
+                    
+                    next_dist = self.target_model(next_states)
+                    next_dist = F.softmax(next_dist, dim=2)
+                    next_q = (next_dist * self.support).sum(2)
+                    next_q_max = next_q.max(1)[0].unsqueeze(1)
+                    
+                    target_q = rewards + (1 - dones) * (self.gamma ** self.n_step) * next_q_max
+                    td_errors = torch.abs(current_q_selected - target_q)
+                else:
+                    current_q = self.model(states).gather(1, actions)
+                    next_q_values = self.model(next_states)
+                    next_actions = next_q_values.max(1)[1].unsqueeze(1)
+                    next_q_target = self.target_model(next_states).gather(1, next_actions)
+                    target_q = rewards + (1 - dones) * (self.gamma ** self.n_step) * next_q_target
+                    td_errors = torch.abs(current_q - target_q)
+                
+                priorities = td_errors.detach().cpu().numpy().flatten() + 1e-6
+                self.memory.update_priorities(indices, priorities)
+        
+        # 梯度下降
+        self.optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 10)
+        self.optimizer.step()
+        
+        return loss.item()
+    
+    def _compute_standard_loss(self, states, actions, rewards, next_states, dones, weights):
+        """
+        计算标准DQN损失
+        """
+        # 计算当前Q值
+        q_values = self.model(states).gather(1, actions)
+        
+        # 计算目标Q值
+        with torch.no_grad():
+            # 双DQN
+            next_q_values = self.model(next_states)
+            next_actions = next_q_values.max(1)[1].unsqueeze(1)
+            next_q_values_target = self.target_model(next_states).gather(1, next_actions)
+            
+            # 使用n步折扣
+            target_q_values = rewards + (1 - dones) * (self.gamma ** self.n_step) * next_q_values_target
+        
+        # 计算损失
+        td_errors = torch.abs(q_values - target_q_values)
+        loss = (td_errors * weights).mean()
+        
+        return loss
+    
+    def _compute_distributional_loss(self, states, actions, rewards, next_states, dones, weights):
+        """
+        计算分布式Q学习损失 (C51算法)
+        """
+        batch_size = states.size(0)
+        
+        # 计算当前分布
+        current_dist = self.model(states)  # [batch, actions, atoms]
+        current_dist = F.log_softmax(current_dist, dim=2)
+        current_dist = current_dist.gather(1, actions.unsqueeze(2).expand(-1, -1, self.n_atoms)).squeeze(1)
+        
+        # 计算目标分布
+        with torch.no_grad():
+            # 使用主网络选择动作 (Double DQN)
+            next_dist = self.model(next_states)
+            next_dist = F.softmax(next_dist, dim=2)
+            next_q = (next_dist * self.support).sum(2)
+            next_actions = next_q.max(1)[1]
+            
+            # 使用目标网络评估动作
+            next_dist_target = self.target_model(next_states)
+            next_dist_target = F.softmax(next_dist_target, dim=2)
+            next_dist_target = next_dist_target.gather(1, next_actions.unsqueeze(1).unsqueeze(2).expand(-1, -1, self.n_atoms)).squeeze(1)
+            
+            # 计算目标支撑
+            rewards = rewards.expand(-1, self.n_atoms)
+            dones = dones.expand(-1, self.n_atoms)
+            support = self.support.expand(batch_size, -1)
+            
+            target_support = rewards + (1 - dones) * (self.gamma ** self.n_step) * support
+            target_support = target_support.clamp(self.v_min, self.v_max)
+            
+            # 分布投影
+            b = (target_support - self.v_min) / self.delta_z
+            l = b.floor().long()
+            u = b.ceil().long()
+            
+            target_dist = torch.zeros_like(next_dist_target)
+            target_dist.scatter_add_(1, l, next_dist_target * (u.float() - b))
+            target_dist.scatter_add_(1, u, next_dist_target * (b - l.float()))
+        
+        # 计算KL散度损失
+        loss = -(target_dist * current_dist).sum(1)
+        loss = (loss * weights.squeeze()).mean()
+        
+        return loss

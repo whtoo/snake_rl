@@ -2,19 +2,18 @@ name: snake_rl
 channels:
   - conda-forge
   - defaults
-  - pytorch # 添加 pytorch 频道以获得官方的 PyTorch CPU conda 包
+  - pytorch
 dependencies:
   - python=3.10
   - pip
-  - numpy
+  - numpy>=2.0
   - matplotlib
   - jupyter
   - tensorboard
+  - pytorch
   - pip:
-    - torch==2.3.0  # 指定与DirectML兼容的版本
-    - torch-directml
     - gymnasium[atari,accept-rom-license]
     - ale-py
-    - opencv-python
+    - opencv-python>=4.10.0.84
     - pillow
     - tqdm

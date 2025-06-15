@@ -7,9 +7,9 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
 import signal # 新增导入
-import torch_directml as dml
-from model import DQN, DuelingDQN
-from agent import DQNAgent
+#import torch_directml as dml
+from model import DQN, DuelingDQN, RainbowDQN
+from agent import DQNAgent, RainbowAgent
 from utils import make_env, plot_rewards
 
 def parse_args():
@@ -18,7 +18,7 @@ def parse_args():
     """
     parser = argparse.ArgumentParser(description="DQN训练脚本")
     parser.add_argument("--env", type=str, default="ALE/Assault-v5", help="Gym环境名称")
-    parser.add_argument("--model", type=str, default="dqn", choices=["dqn", "dueling"], help="模型类型")
+    parser.add_argument("--model", type=str, default="dqn", choices=["dqn", "dueling", "rainbow"], help="模型类型")
     parser.add_argument("--episodes", type=int, default=1000, help="训练回合数")
     parser.add_argument("--buffer_size", type=int, default=100000, help="经验回放缓冲区大小")
     parser.add_argument("--batch_size", type=int, default=32, help="训练批量大小")
@@ -29,6 +29,13 @@ def parse_args():
     parser.add_argument("--epsilon_decay", type=int, default=100000, help="探索率衰减帧数")
     parser.add_argument("--target_update", type=int, default=1000, help="目标网络更新频率")
     parser.add_argument("--prioritized_replay", action="store_true", help="是否使用优先经验回放")
+    # Rainbow DQN 特有参数
+    parser.add_argument("--n_step", type=int, default=3, help="N步学习的步数")
+    parser.add_argument("--use_noisy", action="store_true", help="是否使用噪声网络")
+    parser.add_argument("--use_distributional", action="store_true", help="是否使用分布式Q学习")
+    parser.add_argument("--n_atoms", type=int, default=51, help="分布式Q学习的原子数量")
+    parser.add_argument("--v_min", type=float, default=-10, help="值函数的最小值")
+    parser.add_argument("--v_max", type=float, default=10, help="值函数的最大值")
     parser.add_argument("--save_dir", type=str, default="checkpoints", help="模型保存目录")
     parser.add_argument("--log_dir", type=str, default="logs", help="日志保存目录")
     parser.add_argument("--save_interval", type=int, default=100, help="模型保存间隔（回合）")
@@ -72,12 +79,14 @@ def train(args):
 
     if torch.cuda.is_available():
         device_str = "cuda"
+    elif torch.backends.mps.is_built():
+        device_str = "mps"
     else:
         try:
             # 尝试将张量移动到 "dml" 设备以检查其可用性
             # 这需要 torch-directml 包已安装
            # Initialize the DirectML device
-            device = dml.device(dml.default_device())
+            #device = dml.device(dml.default_device())
             print(f"Using DirectML device: {device}")
             print("Attempting to use DirectML (dml) device.")
         except RuntimeError:
@@ -99,26 +108,68 @@ def train(args):
     if args.model == "dqn":
         model = DQN(input_shape, n_actions)
         target_model = DQN(input_shape, n_actions)
-    else:  # dueling
+    elif args.model == "dueling":
         model = DuelingDQN(input_shape, n_actions)
         target_model = DuelingDQN(input_shape, n_actions)
+    else:  # rainbow
+        model = RainbowDQN(
+            input_shape=input_shape,
+            n_actions=n_actions,
+            n_atoms=args.n_atoms,
+            v_min=args.v_min,
+            v_max=args.v_max,
+            use_noisy=args.use_noisy,
+            use_distributional=args.use_distributional
+        )
+        target_model = RainbowDQN(
+            input_shape=input_shape,
+            n_actions=n_actions,
+            n_atoms=args.n_atoms,
+            v_min=args.v_min,
+            v_max=args.v_max,
+            use_noisy=args.use_noisy,
+            use_distributional=args.use_distributional
+        )
     
     # 创建智能体
-    agent = DQNAgent(
-        model=model,
-        target_model=target_model,
-        env=env,
-        device=device,
-        buffer_size=args.buffer_size,
-        batch_size=args.batch_size,
-        gamma=args.gamma,
-        lr=args.lr,
-        epsilon_start=args.epsilon_start,
-        epsilon_final=args.epsilon_final,
-        epsilon_decay=args.epsilon_decay,
-        target_update=args.target_update,
-        prioritized_replay=args.prioritized_replay
-    )
+    if args.model == "rainbow":
+        agent = RainbowAgent(
+            model=model,
+            target_model=target_model,
+            env=env,
+            device=device,
+            buffer_size=args.buffer_size,
+            batch_size=args.batch_size,
+            gamma=args.gamma,
+            lr=args.lr,
+            epsilon_start=args.epsilon_start,
+            epsilon_final=args.epsilon_final,
+            epsilon_decay=args.epsilon_decay,
+            target_update=args.target_update,
+            prioritized_replay=args.prioritized_replay,
+            n_step=args.n_step,
+            use_noisy=args.use_noisy,
+            use_distributional=args.use_distributional,
+            n_atoms=args.n_atoms,
+            v_min=args.v_min,
+            v_max=args.v_max
+        )
+    else:
+        agent = DQNAgent(
+            model=model,
+            target_model=target_model,
+            env=env,
+            device=device,
+            buffer_size=args.buffer_size,
+            batch_size=args.batch_size,
+            gamma=args.gamma,
+            lr=args.lr,
+            epsilon_start=args.epsilon_start,
+            epsilon_final=args.epsilon_final,
+            epsilon_decay=args.epsilon_decay,
+            target_update=args.target_update,
+            prioritized_replay=args.prioritized_replay
+        )
     
     # 创建TensorBoard日志记录器
     writer = SummaryWriter(log_dir=args.log_dir)
@@ -159,7 +210,10 @@ def train(args):
             next_state, reward, done, truncated, _ = env.step(action)
             
             # 存储经验
-            agent.memory.push(state, action, reward, next_state, done)
+            if isinstance(agent, RainbowAgent):
+                agent.store_experience(state, action, reward, next_state, done)
+            else:
+                agent.memory.push(state, action, reward, next_state, done)
             
             # 更新模型
             loss = agent.update_model()
