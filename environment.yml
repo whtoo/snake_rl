@@ -6,14 +6,14 @@ channels:
 dependencies:
   - python=3.10
   - pip
-  - numpy>=2.0
-  - matplotlib
-  - jupyter
-  - tensorboard
-  - pytorch
+  - numpy>=2.0.0
+  - matplotlib>=3.7.0
+  - jupyter>=1.0.0
+  - tensorboard>=2.13.0
+  - pytorch>=2.0.0
   - pip:
-    - gymnasium[atari,accept-rom-license]
-    - ale-py
-    - opencv-python>=4.10.0.84
-    - pillow
-    - tqdm
+    - gymnasium[atari,accept-rom-license]>=0.29.0
+    - ale-py>=0.8.1
+    - opencv-python>=4.10.0
+    - pillow>=10.0.0
+    - tqdm>=4.65.0

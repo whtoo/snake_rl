@@ -1,0 +1,29 @@
+# Conda configuration for snake_rl project
+# This file helps suppress deprecation warnings and optimizes conda behavior
+
+# Suppress version specification warnings
+quiet: true
+
+# Channel priority
+channel_priority: flexible
+
+# Default channels
+channels:
+  - conda-forge
+  - defaults
+  - pytorch
+
+# Solver settings
+solver: libmamba
+
+# Always use strict channel priority
+strict_channel_priority: false
+
+# Show channel URLs
+show_channel_urls: true
+
+# Auto update conda
+auto_update_conda: false
+
+# Report errors
+report_errors: false
