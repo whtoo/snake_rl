@@ -127,7 +127,7 @@ dmypy.json
 
 # 训练生成的模型文件
 models/
-checkpoints/
+#checkpoints/
 *.pth
 *.pt
 *.pkl
