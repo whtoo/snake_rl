@@ -19,7 +19,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="DQN训练脚本")
     parser.add_argument("--env", type=str, default="ALE/Assault-v5", help="Gym环境名称")
     parser.add_argument("--model", type=str, default="dqn", choices=["dqn", "dueling"], help="模型类型")
-    parser.add_argument("--episodes", type=int, default=1000, help="训练回合数")
+    parser.add_argument("--episodes", type=int, default=20, help="训练回合数")
     parser.add_argument("--buffer_size", type=int, default=100000, help="经验回放缓冲区大小")
     parser.add_argument("--batch_size", type=int, default=32, help="训练批量大小")
     parser.add_argument("--gamma", type=float, default=0.99, help="折扣因子")
