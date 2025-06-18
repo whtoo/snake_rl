@@ -20,7 +20,7 @@ def parse_args():
                         default="ALE/Assault-v5", help="Gym环境名称")
     parser.add_argument("--model", type=str, default="rainbow",
                         choices=["dqn", "dueling", "rainbow"], help="模型类型")
-    parser.add_argument("--episodes", type=int, default=1000, help="训练回合数")
+    parser.add_argument("--episodes", type=int, default=100, help="训练回合数")
     parser.add_argument("--buffer_size", type=int,
                         default=100000, help="经验回放缓冲区大小")
     parser.add_argument("--batch_size", type=int, default=32, help="训练批量大小")
