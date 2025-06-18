@@ -1,6 +1,6 @@
 name: snake_rl
 dependencies:
-  - python=3.12
+  - python=3.10
   - pip
   - numpy>=2.0.0
   - matplotlib>=3.7.0
