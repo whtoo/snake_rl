@@ -154,6 +154,25 @@ def make_env(env_name):
     return env
 
 
+def make_env_with_render(env_name, render_mode="human"):
+    """
+    创建并包装游戏环境（支持自定义渲染模式）
+    
+    参数:
+        env_name: 环境名称
+        render_mode: 渲染模式 ("human", "rgb_array", "ansi"等)
+        
+    返回:
+        包装后的环境
+    """
+    env = gym.make(env_name, render_mode=render_mode)
+    env = SkipFrame(env)
+    env = PreprocessFrame(env)
+    env = StackFrames(env)
+    
+    return env
+
+
 def plot_rewards(rewards, avg_rewards, title="Training Rewards", save_path=None):
     """
     绘制奖励曲线

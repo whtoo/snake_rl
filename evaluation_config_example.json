@@ -1,0 +1,53 @@
+{
+  "description": "模型评估配置示例",
+  "evaluation_settings": {
+    "episodes": 100,
+    "seed": 42,
+    "environment": "ALE/Assault-v5",
+    "max_steps_per_episode": 10000
+  },
+  "models": [
+    {
+      "name": "DQN_Baseline",
+      "path": "models/dqn_baseline.pth",
+      "type": "dqn",
+      "description": "基础DQN模型"
+    },
+    {
+      "name": "DQN_Optimized",
+      "path": "models/dqn_optimized.pth",
+      "type": "dqn",
+      "description": "优化后的DQN模型"
+    },
+    {
+      "name": "Dueling_DQN",
+      "path": "models/dueling_dqn.pth",
+      "type": "dueling",
+      "description": "Dueling DQN模型"
+    },
+    {
+      "name": "Rainbow_v1",
+      "path": "models/rainbow_v1.pth",
+      "type": "rainbow",
+      "description": "Rainbow DQN v1"
+    },
+    {
+      "name": "Rainbow_v2",
+      "path": "models/rainbow_v2.pth",
+      "type": "rainbow",
+      "description": "Rainbow DQN v2 (改进版)"
+    }
+  ],
+  "output_settings": {
+    "generate_plots": true,
+    "generate_report": true,
+    "save_raw_data": true,
+    "output_directory": "evaluation_results"
+  },
+  "comparison_metrics": [
+    "mean_reward",
+    "stability",
+    "best_performance",
+    "evaluation_speed"
+  ]
+}

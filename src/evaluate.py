@@ -3,11 +3,12 @@ import torch
 import numpy as np
 import argparse
 import time
+import os
 from tqdm import tqdm
 
-from model import DQN, DuelingDQN
-from agent import DQNAgent
-from utils import make_env, record_video, display_video
+from model import DQN, DuelingDQN, RainbowDQN
+from agent import DQNAgent, RainbowAgent
+from utils import make_env, make_env_with_render, record_video, display_video
 
 
 def parse_args():
@@ -18,7 +19,7 @@ def parse_args():
     parser.add_argument("--env", type=str,
                         default="ALE/Assault-v5", help="Gym环境名称")
     parser.add_argument("--model", type=str, default="dqn",
-                        choices=["dqn", "dueling"], help="模型类型")
+                        choices=["dqn", "dueling", "rainbow"], help="模型类型")
     parser.add_argument("--model_path", type=str, required=True, help="模型文件路径")
     parser.add_argument("--n_episodes", type=int, default=10, help="评估回合数")
     parser.add_argument("--max_steps", type=int, default=10000, help="每回合最大步数")
@@ -43,7 +44,12 @@ def evaluate_agent(args):
     torch.manual_seed(args.seed)
 
     # 创建环境
-    env = make_env(args.env)
+    if args.render:
+        # 如果需要显示画面，使用human渲染模式
+        env = make_env_with_render(args.env, render_mode="human")
+    else:
+        # 否则使用默认的rgb_array模式
+        env = make_env(args.env)
 
     # 设置设备
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -51,23 +57,47 @@ def evaluate_agent(args):
 
     # 创建模型
     input_shape = env.observation_space.shape
-    n_actions = env.action_space.shape[0] if hasattr(
-        env.action_space, 'shape') else env.action_space.n
+    
+    # 修复动作数量获取逻辑
+    if hasattr(env.action_space, 'n'):
+        n_actions = env.action_space.n
+    elif hasattr(env.action_space, 'shape') and len(env.action_space.shape) > 0:
+        n_actions = env.action_space.shape[0]
+    else:
+        raise ValueError(f"无法确定动作数量，动作空间类型: {type(env.action_space)}")
+    
+    print(f"输入形状: {input_shape}, 动作数量: {n_actions}")
 
     if args.model == "dqn":
         model = DQN(input_shape, n_actions)
         target_model = DQN(input_shape, n_actions)
-    else:  # dueling
+        # 创建智能体
+        agent = DQNAgent(
+            model=model,
+            target_model=target_model,
+            env=env,
+            device=device
+        )
+    elif args.model == "dueling":
         model = DuelingDQN(input_shape, n_actions)
         target_model = DuelingDQN(input_shape, n_actions)
-
-    # 创建智能体
-    agent = DQNAgent(
-        model=model,
-        target_model=target_model,
-        env=env,
-        device=device
-    )
+        # 创建智能体
+        agent = DQNAgent(
+            model=model,
+            target_model=target_model,
+            env=env,
+            device=device
+        )
+    else:  # rainbow
+        model = RainbowDQN(input_shape, n_actions)
+        target_model = RainbowDQN(input_shape, n_actions)
+        # 创建智能体
+        agent = RainbowAgent(
+            model=model,
+            target_model=target_model,
+            env=env,
+            device=device
+        )
 
     # 加载模型
     if not os.path.exists(args.model_path):
@@ -86,6 +116,11 @@ def evaluate_agent(args):
         os.makedirs(args.video_path, exist_ok=True)
 
     print(f"Evaluating agent for {args.n_episodes} episodes...")
+    if args.render:
+        print("🎮 游戏画面显示已启用 - 您将看到智能体的实时游戏过程")
+        print("💡 提示: 可以按Ctrl+C来提前停止评估")
+    if args.record_video:
+        print(f"📹 视频录制已启用 - 视频将保存到: {args.video_path}")
 
     # 评估循环
     for episode in tqdm(range(1, args.n_episodes + 1)):
@@ -118,7 +153,7 @@ def evaluate_agent(args):
             # 如果需要渲染，显示游戏画面
             if args.render:
                 env.render()
-                time.sleep(0.01)  # 稍微延迟以便观看
+                time.sleep(0.05)  # 适当延迟以便观看，避免画面过快
 
             if done or truncated:
                 break
@@ -204,30 +239,57 @@ def demo_agent(args):
     torch.manual_seed(args.seed)
 
     # 创建环境（用于演示的环境需要支持渲染）
-    env = make_env(args.env)
+    if args.render:
+        env = make_env_with_render(args.env, render_mode="human")
+    else:
+        env = make_env(args.env)
 
     # 设置设备
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # 创建模型
     input_shape = env.observation_space.shape
-    n_actions = env.action_space.shape[0] if hasattr(
-        env.action_space, 'shape') else env.action_space.n
+    
+    # 修复动作数量获取逻辑
+    if hasattr(env.action_space, 'n'):
+        n_actions = env.action_space.n
+    elif hasattr(env.action_space, 'shape') and len(env.action_space.shape) > 0:
+        n_actions = env.action_space.shape[0]
+    else:
+        raise ValueError(f"无法确定动作数量，动作空间类型: {type(env.action_space)}")
+    
+    print(f"输入形状: {input_shape}, 动作数量: {n_actions}")
 
     if args.model == "dqn":
         model = DQN(input_shape, n_actions)
         target_model = DQN(input_shape, n_actions)
-    else:  # dueling
+        # 创建智能体
+        agent = DQNAgent(
+            model=model,
+            target_model=target_model,
+            env=env,
+            device=device
+        )
+    elif args.model == "dueling":
         model = DuelingDQN(input_shape, n_actions)
         target_model = DuelingDQN(input_shape, n_actions)
-
-    # 创建智能体
-    agent = DQNAgent(
-        model=model,
-        target_model=target_model,
-        env=env,
-        device=device
-    )
+        # 创建智能体
+        agent = DQNAgent(
+            model=model,
+            target_model=target_model,
+            env=env,
+            device=device
+        )
+    else:  # rainbow
+        model = RainbowDQN(input_shape, n_actions)
+        target_model = RainbowDQN(input_shape, n_actions)
+        # 创建智能体
+        agent = RainbowAgent(
+            model=model,
+            target_model=target_model,
+            env=env,
+            device=device
+        )
 
     # 加载模型
     print(f"Loading model from {args.model_path}")
@@ -252,9 +314,18 @@ def demo_agent(args):
 if __name__ == "__main__":
     args = parse_args()
 
-    if args.render or args.record_video:
-        # 如果需要渲染或录制视频，运行演示模式
-        demo_agent(args)
-    else:
-        # 否则运行标准评估
-        evaluate_agent(args)
+    try:
+        if args.record_video and not args.render:
+            # 如果只需要录制视频而不显示画面，运行演示模式
+            print("🎬 运行演示模式 - 录制视频但不显示画面")
+            demo_agent(args)
+        else:
+            # 运行标准评估模式（支持显示画面）
+            print("📊 运行评估模式")
+            evaluate_agent(args)
+    except KeyboardInterrupt:
+        print("\n⏹️  评估已被用户中断")
+    except Exception as e:
+        print(f"\n❌ 评估过程中发生错误: {e}")
+        import traceback
+        traceback.print_exc()

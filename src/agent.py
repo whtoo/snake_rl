@@ -314,11 +314,39 @@ class DQNAgent:
         """
         加载模型
         """
-        checkpoint = torch.load(path)
-        self.model.load_state_dict(checkpoint['model_state_dict'])
-        self.target_model.load_state_dict(checkpoint['target_model_state_dict'])
-        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        self.steps_done = checkpoint['steps_done']
+        checkpoint = torch.load(path, weights_only=False)
+        
+        # 尝试加载模型状态，如果键不匹配则使用strict=False
+        try:
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+        except RuntimeError as e:
+            if "Missing key(s)" in str(e) or "Unexpected key(s)" in str(e):
+                print(f"⚠️ 模型结构不完全匹配，使用兼容模式加载: {e}")
+                self.model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+            else:
+                raise e
+        
+        try:
+            self.target_model.load_state_dict(checkpoint['target_model_state_dict'])
+        except RuntimeError as e:
+            if "Missing key(s)" in str(e) or "Unexpected key(s)" in str(e):
+                print(f"⚠️ 目标模型结构不完全匹配，使用兼容模式加载")
+                self.target_model.load_state_dict(checkpoint['target_model_state_dict'], strict=False)
+            else:
+                raise e
+        
+        # 优化器和步数可能不存在于旧版本的检查点中
+        if 'optimizer_state_dict' in checkpoint:
+            try:
+                self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            except Exception as e:
+                print(f"⚠️ 优化器状态加载失败，将使用默认状态: {e}")
+        
+        if 'steps_done' in checkpoint:
+            self.steps_done = checkpoint['steps_done']
+        else:
+            print("⚠️ 检查点中未找到steps_done，使用默认值0")
+            self.steps_done = 0
 
 
 class NStepBuffer:

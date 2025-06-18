@@ -10,6 +10,16 @@ import subprocess
 import sys
 import asyncio
 
+# 导入环境修复模块
+try:
+    from fix_environment import setup_environment, check_dependencies
+except ImportError:
+    print("警告: 无法导入环境修复模块")
+    def setup_environment():
+        pass
+    def check_dependencies():
+        return True
+
 def check_conda_env(env_name):
     """检查 conda 环境是否存在"""
     try:
@@ -94,6 +104,16 @@ async def main():
     print(f"训练回合: {episodes}")
     print("游戏环境: ALE/Assault-v5") 
     print("======================================")
+    
+    # 设置环境变量以解决常见问题
+    print("设置环境变量...")
+    setup_environment()
+    
+    # 检查依赖
+    print("检查依赖...")
+    if not check_dependencies():
+        print("依赖检查失败，请检查安装")
+        sys.exit(1)
 
     # 检查 conda 环境
     env_name = 'snake_rl'
