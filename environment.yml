@@ -1,10 +1,6 @@
 name: snake_rl
-channels:
-  - conda-forge
-  - defaults
-  - pytorch
 dependencies:
-  - python=3.10
+  - python=3.12
   - pip
   - numpy>=2.0.0
   - matplotlib>=3.7.0
