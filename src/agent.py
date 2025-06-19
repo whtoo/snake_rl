@@ -309,7 +309,7 @@ class DQNAgent:
         else:
             return random.randrange(self.env.action_space.n)
     
-    def update_model(self):
+    def update_model(self, current_episode=None, total_episodes=None): # Signature changed
         if len(self.memory) < self.batch_size:
             return 0.0
         
@@ -361,9 +361,12 @@ class DQNAgent:
                 current_time = time.time()
                 elapsed_time_for_log_updates = current_time - self._last_log_print_time
 
-                print(f"DQNAgent Update: {self._training_updates_count}, Env Interactions: {self.steps_done}, "
-                      f"Avg Loss (last {self._log_every_n_updates} updates): {avg_loss:.4f}, "
-                      f"Time for these {self._log_every_n_updates} updates: {elapsed_time_for_log_updates:.2f}s")
+                episode_info = ""
+                if current_episode is not None and total_episodes is not None:
+                    episode_info = f"(Ep: {current_episode}/{total_episodes}) "
+
+                print(f"DQNAgent {episode_info}Update: {self._training_updates_count}, Avg Loss: {avg_loss:.4f}, "
+                      f"Batch Duration: {elapsed_time_for_log_updates:.2f}s, Env Interactions: {self.steps_done}")
 
                 self._loss_sum_for_logging = 0.0
                 self._last_log_print_time = current_time # Reset timer
@@ -747,7 +750,7 @@ class RainbowAgent(DQNAgent):
                 self.memory.push(exp.state, exp.action, exp.reward, exp.next_state, exp.done)
             self.n_step_buffer.reset()
     
-    def update_model(self):
+    def update_model(self, current_episode=None, total_episodes=None): # Signature changed
         if len(self.memory) < self.batch_size:
             return 0.0
         
@@ -835,11 +838,14 @@ class RainbowAgent(DQNAgent):
             current_time = time.time()
             elapsed_time_for_log_updates = current_time - self._rainbow_last_log_print_time
 
+            episode_info = ""
+            if current_episode is not None and total_episodes is not None:
+                episode_info = f"(Ep: {current_episode}/{total_episodes}) "
+
             # self.steps_done is from DQNAgent, tracks total env interactions
-            print(f"RainbowAgent Update: {self._rainbow_training_updates_count}, Env Interactions: {self.steps_done}, "
-                  f"Avg Loss (last {self._rainbow_log_every_n_updates} updates): {avg_loss:.4f}, "
-                  f"Current N-step: {self.n_step_buffer.current_n_step}, "
-                  f"Time for these {self._rainbow_log_every_n_updates} updates: {elapsed_time_for_log_updates:.2f}s")
+            print(f"RainbowAgent {episode_info}Update: {self._rainbow_training_updates_count}, Avg Loss: {avg_loss:.4f}, "
+                  f"Batch Duration: {elapsed_time_for_log_updates:.2f}s, Env Interactions: {self.steps_done}, "
+                  f"N-Step: {self.n_step_buffer.current_n_step}")
 
             self._rainbow_loss_sum_for_logging = 0.0
             self._rainbow_last_log_print_time = current_time # Reset timer

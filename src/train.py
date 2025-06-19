@@ -260,7 +260,7 @@ def train(args):
                     agent.memory.push(state, action, reward, next_state, done)
 
                 # 更新模型
-                loss = agent.update_model()
+                loss = agent.update_model(current_episode=episode, total_episodes=args.episodes)
                 if loss is not None:
                     episode_loss += loss
 
