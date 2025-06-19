@@ -3,9 +3,113 @@ import torch
 import torch.optim as optim
 import random
 from collections import deque, namedtuple
+from .utils import ExperienceAugmenter # Import ExperienceAugmenter
 
 # 定义经验元组的结构
 Experience = namedtuple('Experience', ('state', 'action', 'reward', 'next_state', 'done'))
+
+class SumTree:
+    """
+    SumTree data structure for efficient prioritized experience replay.
+    Leaf nodes store experience priorities, and internal nodes store the sum of their children's priorities.
+
+    Args:
+        capacity (int): The number of leaf nodes, which is the capacity of the replay buffer.
+    """
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.tree = np.zeros(2 * capacity - 1, dtype=np.float32) # Use float32 for priorities
+        self.data_indices = np.zeros(capacity, dtype=int) # Stores the actual index in the main experience buffer for each leaf
+        self._max_priority = 1.0 # Tracks the maximum priority for new experiences
+        self.data_pointer = 0 # Points to the current leaf index to update (cyclical)
+
+    def _propagate(self, tree_idx, change):
+        parent = (tree_idx - 1) // 2
+        self.tree[parent] += change
+        if parent != 0:
+            self._propagate(parent, change)
+
+    def _retrieve(self, tree_idx, s):
+        """
+        Recursively finds the leaf node corresponding to a cumulative priority value `s`.
+
+        Args:
+            tree_idx (int): Current node's index in the tree.
+            s (float): Cumulative priority value.
+
+        Returns:
+            int: Index of the found leaf node in the tree.
+        """
+        left = 2 * tree_idx + 1
+        right = left + 1
+        if left >= len(self.tree): # Reached a leaf node
+            return tree_idx
+        if s <= self.tree[left]:
+            return self._retrieve(left, s)
+        else:
+            return self._retrieve(right, s - self.tree[left])
+
+    def total_priority(self):
+        """Returns the total sum of all priorities (value of the root node)."""
+        return self.tree[0]
+
+    def add(self, priority, data_buffer_idx):
+        """
+        Adds a new priority to a leaf node, corresponding to an experience.
+        If the buffer is full, it overwrites the oldest entry in terms of SumTree leaf updates.
+
+        Args:
+            priority (float): Priority of the new experience.
+            data_buffer_idx (int): Index of the actual experience in the main replay buffer.
+        """
+        tree_idx = self.data_pointer + self.capacity - 1 # Calculate tree index for the current leaf
+        self.data_indices[self.data_pointer] = data_buffer_idx # Store mapping from this leaf to the experience's actual buffer index
+        
+        self.update(tree_idx, priority) # Update the tree with the new priority
+
+        self.data_pointer = (self.data_pointer + 1) % self.capacity # Move pointer to the next leaf to update
+        if priority > self._max_priority: # Update overall max priority if this new priority is higher
+             self._max_priority = priority
+
+    def update(self, tree_idx, priority):
+        """
+        Updates the priority of a leaf node and propagates the change up the tree.
+
+        Args:
+            tree_idx (int): Tree index of the leaf node to update.
+            priority (float): New priority value.
+        """
+        change = priority - self.tree[tree_idx]
+        self.tree[tree_idx] = priority
+        self._propagate(tree_idx, change) # Propagate change to parent nodes
+
+        # Update max_priority if a leaf's priority (and not an internal node's sum) changes to be the new max
+        if priority > self._max_priority and tree_idx >= (self.capacity - 1): # tree_idx for leaves start at capacity - 1
+             self._max_priority = priority
+
+
+    def get_leaf(self, s):
+        """
+        Samples a leaf node based on a cumulative priority value `s`.
+
+        Args:
+            s (float): A random value between 0 and `total_priority()`.
+
+        Returns:
+            tuple: (leaf_tree_idx, priority_value, data_buffer_idx)
+                   - leaf_tree_idx: The tree index of the sampled leaf.
+                   - priority_value: The priority of the sampled leaf.
+                   - data_buffer_idx: The index of the corresponding experience in the main replay buffer.
+        """
+        leaf_idx = self._retrieve(0, s)
+        data_idx_in_sumtree_leaf_array = leaf_idx - self.capacity + 1 # Convert tree leaf index to index in self.data_indices
+        return leaf_idx, self.tree[leaf_idx], self.data_indices[data_idx_in_sumtree_leaf_array]
+
+    @property
+    def max_priority(self):
+        """Returns the current maximum priority seen in the tree (or 1.0 if tree is empty/all zeros)."""
+        return self._max_priority if self._max_priority > 0 else 1.0
+
 
 class ReplayBuffer:
     """
@@ -13,143 +117,143 @@ class ReplayBuffer:
     存储和采样智能体与环境交互的经验
     """
     def __init__(self, capacity):
-        """
-        初始化经验回放缓冲区
-        
-        参数:
-            capacity: 缓冲区容量 (最大存储经验数量)
-        """
         self.buffer = deque(maxlen=capacity)
     
     def push(self, state, action, reward, next_state, done):
-        """
-        将经验存入缓冲区
-        """
         self.buffer.append(Experience(state, action, reward, next_state, done))
     
     def sample(self, batch_size):
-        """
-        从缓冲区随机采样一批经验
-        
-        参数:
-            batch_size: 批量大小
-            
-        返回:
-            states, actions, rewards, next_states, dones 的批量数据
-        """
         experiences = random.sample(self.buffer, batch_size)
-        
-        # 将经验批量转换为张量形式
         states = torch.cat([torch.FloatTensor(exp.state).unsqueeze(0) for exp in experiences])
-        actions = torch.tensor([
-            exp.action for exp in experiences], dtype=torch.long).unsqueeze(1)
-        rewards = torch.tensor([
-            exp.reward for exp in experiences], dtype=torch.float).unsqueeze(1)
-        next_states = torch.cat([
-            torch.FloatTensor(exp.next_state).unsqueeze(0) for exp in experiences])
-        dones = torch.tensor([
-            exp.done for exp in experiences], dtype=torch.float).unsqueeze(1)
-        
+        actions = torch.tensor([exp.action for exp in experiences], dtype=torch.long).unsqueeze(1)
+        rewards = torch.tensor([exp.reward for exp in experiences], dtype=torch.float).unsqueeze(1)
+        next_states = torch.cat([torch.FloatTensor(exp.next_state).unsqueeze(0) for exp in experiences])
+        dones = torch.tensor([exp.done for exp in experiences], dtype=torch.float).unsqueeze(1)
         return states, actions, rewards, next_states, dones
     
     def __len__(self):
-        """
-        返回缓冲区当前大小
-        """
         return len(self.buffer)
 
 
 class PrioritizedReplayBuffer:
-    """
-    优先经验回放缓冲区
-    根据TD误差对经验进行优先级采样
-    """
-    def __init__(self, capacity, alpha=0.6, beta_start=0.4, beta_frames=100000):
+    epsilon = 1e-5  # Small constant added to priorities to ensure no zero priority.
+    alpha = 0.6  # Exponent for converting TD errors to priorities. Controls shape of distribution.
+    beta_start = 0.4  # Initial value for beta (importance-sampling exponent). Annealed towards 1.0.
+    beta_frames = 100000 # Number of frames over which beta is annealed to 1.0.
+
+    def __init__(self, capacity):
         """
-        初始化优先经验回放缓冲区
-        
-        参数:
-            capacity: 缓冲区容量
-            alpha: 优先级指数 (0 - 均匀采样, 1 - 完全按优先级采样)
-            beta_start: 初始重要性采样指数
-            beta_frames: beta从beta_start到1的帧数
+        Initializes the PrioritizedReplayBuffer.
+
+        Args:
+            capacity (int): Maximum number of experiences to store.
         """
+        self.tree = SumTree(capacity)
         self.capacity = capacity
-        self.alpha = alpha
-        self.beta_start = beta_start
-        self.beta_frames = beta_frames
-        self.frame = 1
-        self.buffer = []
-        self.pos = 0
-        self.priorities = np.zeros((capacity,), dtype=np.float32)
-    
-    def beta_by_frame(self, frame_idx):
+        self.buffer = [None] * capacity # Stores the actual Experience tuples
+        self.write_pos = 0 # Points to the next available slot in self.buffer
+        self.num_experiences = 0 # Current number of experiences in the buffer
+        self.frame = 1 # Counter for frames, used for beta annealing
+
+    def _get_priority(self, td_error):
         """
-        根据当前帧计算beta值
+        Converts a TD error to a priority value.
+        Priority = (|TD_error| + epsilon) ^ alpha.
+
+        Args:
+            td_error (float or np.ndarray): The TD error(s).
+
+        Returns:
+            float or np.ndarray: The calculated priority(ies).
         """
-        return min(1.0, self.beta_start + frame_idx * (1.0 - self.beta_start) / self.beta_frames)
-    
+        return (np.abs(td_error) + self.epsilon) ** self.alpha
+
     def push(self, state, action, reward, next_state, done):
-        """
-        将经验存入缓冲区
-        """
-        max_prio = self.priorities.max() if self.buffer else 1.0
+        experience = Experience(state, action, reward, next_state, done)
+        self.buffer[self.write_pos] = experience
         
-        if len(self.buffer) < self.capacity:
-            self.buffer.append(Experience(state, action, reward, next_state, done))
-        else:
-            self.buffer[self.pos] = Experience(state, action, reward, next_state, done)
+        # New experiences are added with max priority
+        current_max_priority = self.tree.max_priority
+        self.tree.add(current_max_priority, self.write_pos) # data_buffer_idx is self.write_pos
         
-        self.priorities[self.pos] = max_prio
-        self.pos = (self.pos + 1) % self.capacity
+        self.write_pos = (self.write_pos + 1) % self.capacity
+        if self.num_experiences < self.capacity:
+            self.num_experiences += 1
     
     def sample(self, batch_size):
         """
-        根据优先级采样经验
+        Samples a batch of experiences from the buffer using stratified sampling.
+        Calculates and returns importance sampling (IS) weights for each sampled experience.
+
+        Args:
+            batch_size (int): The number of experiences to sample.
+
+        Returns:
+            tuple: A tuple containing:
+                - states (torch.Tensor): Batch of states.
+                - actions (torch.Tensor): Batch of actions.
+                - rewards (torch.Tensor): Batch of rewards.
+                - next_states (torch.Tensor): Batch of next states.
+                - dones (torch.Tensor): Batch of done flags.
+                - tree_indices (np.ndarray): Array of tree indices for the sampled experiences (for priority updates).
+                - weights_tensor (torch.Tensor): Importance sampling weights for the batch.
         """
-        if len(self.buffer) == self.capacity:
-            prios = self.priorities
-        else:
-            prios = self.priorities[:self.pos]
+        batch_experiences = []
+        tree_indices = np.empty((batch_size,), dtype=np.int32) # To store sumtree leaf indices
+        priorities_for_weights = np.empty((batch_size,), dtype=np.float32)
         
-        # 计算采样概率
-        probs = prios ** self.alpha
-        probs /= probs.sum()
+        total_p = self.tree.total_priority()
+        segment_len = total_p / batch_size # For stratified sampling; ensures samples are from different parts of the distribution
         
-        # 采样索引
-        indices = np.random.choice(len(self.buffer), batch_size, p=probs)
-        samples = [self.buffer[idx] for idx in indices]
-        
-        # 计算重要性权重
-        beta = self.beta_by_frame(self.frame)
+        # Anneal beta
+        beta = min(1.0, self.beta_start + self.frame * (1.0 - self.beta_start) / self.beta_frames)
         self.frame += 1
+
+        for i in range(batch_size):
+            s = random.uniform(segment_len * i, segment_len * (i + 1))
+            tree_idx, priority, data_buffer_idx = self.tree.get_leaf(s)
+
+            batch_experiences.append(self.buffer[data_buffer_idx])
+            tree_indices[i] = tree_idx
+            priorities_for_weights[i] = priority
+
+        probs = priorities_for_weights / total_p
         
-        # 计算权重
-        weights = (len(self.buffer) * probs[indices]) ** (-beta)
-        weights /= weights.max()
-        weights = torch.tensor(weights, dtype=torch.float).unsqueeze(1)
+        # N for IS weight calculation: number of experiences in the buffer.
+        # Using self.num_experiences is accurate for both partially and fully filled buffers.
+        N = self.num_experiences
+        weights = (N * probs) ** (-beta)
         
-        # 将经验批量转换为张量形式
-        states = torch.cat([torch.FloatTensor(exp.state).unsqueeze(0) for exp in samples])
-        actions = torch.tensor([exp.action for exp in samples], dtype=torch.long).unsqueeze(1)
-        rewards = torch.tensor([exp.reward for exp in samples], dtype=torch.float).unsqueeze(1)
-        next_states = torch.cat([torch.FloatTensor(exp.next_state).unsqueeze(0) for exp in samples])
-        dones = torch.tensor([exp.done for exp in samples], dtype=torch.float).unsqueeze(1)
+        # Normalize weights by dividing by the maximum weight for stability
+        if weights.max() > 0:
+            weights /= weights.max()
+        else: # Handle case where all priorities (and thus probs and weights) might be zero
+            weights = np.ones_like(weights)
+
+        weights_tensor = torch.tensor(weights, dtype=torch.float).unsqueeze(1)
+
+        states = torch.cat([torch.FloatTensor(exp.state).unsqueeze(0) for exp in batch_experiences])
+        actions = torch.tensor([exp.action for exp in batch_experiences], dtype=torch.long).unsqueeze(1)
+        rewards = torch.tensor([exp.reward for exp in batch_experiences], dtype=torch.float).unsqueeze(1)
+        next_states = torch.cat([torch.FloatTensor(exp.next_state).unsqueeze(0) for exp in batch_experiences])
+        dones = torch.tensor([exp.done for exp in batch_experiences], dtype=torch.float).unsqueeze(1)
         
-        return states, actions, rewards, next_states, dones, indices, weights
+        return states, actions, rewards, next_states, dones, tree_indices, weights_tensor
     
-    def update_priorities(self, indices, priorities):
+    def update_priorities(self, tree_indices, td_errors):
         """
-        更新经验的优先级
+        Updates the priorities of sampled experiences using their TD errors.
+
+        Args:
+            tree_indices (np.ndarray): Array of tree indices for the experiences whose priorities need updating.
+            td_errors (np.ndarray): Array of TD errors corresponding to the sampled experiences.
         """
-        for idx, priority in zip(indices, priorities):
-            self.priorities[idx] = priority
+        priorities = self._get_priority(td_errors)
+        for tree_idx, priority_val in zip(tree_indices, priorities):
+            self.tree.update(tree_idx, priority_val)
     
     def __len__(self):
-        """
-        返回缓冲区当前大小
-        """
-        return len(self.buffer)
+        return self.num_experiences
 
 
 class DQNAgent:
@@ -161,28 +265,10 @@ class DQNAgent:
                  lr=1e-4, epsilon_start=1.0, epsilon_final=0.01,
                  epsilon_decay=10000, target_update=1000,
                  prioritized_replay=False):
-        """
-        初始化DQN智能体
-        
-        参数:
-            model: 主Q网络
-            target_model: 目标Q网络
-            env: 游戏环境
-            device: 计算设备 (CPU/GPU)
-            buffer_size: 经验回放缓冲区大小
-            batch_size: 训练批量大小
-            gamma: 折扣因子
-            lr: 学习率
-            epsilon_start: 初始探索率
-            epsilon_final: 最终探索率
-            epsilon_decay: 探索率衰减帧数
-            target_update: 目标网络更新频率
-            prioritized_replay: 是否使用优先经验回放
-        """
         self.model = model.to(device)
         self.target_model = target_model.to(device)
         self.target_model.load_state_dict(self.model.state_dict())
-        self.target_model.eval()  # 目标网络不进行梯度更新
+        self.target_model.eval()
         
         self.env = env
         self.device = device
@@ -190,119 +276,80 @@ class DQNAgent:
         self.gamma = gamma
         self.target_update = target_update
         
-        # 创建经验回放缓冲区
         if prioritized_replay:
+            # For PrioritizedReplayBuffer, alpha, beta_start, beta_frames are class variables or handled internally
             self.memory = PrioritizedReplayBuffer(buffer_size)
             self.prioritized_replay = True
         else:
             self.memory = ReplayBuffer(buffer_size)
             self.prioritized_replay = False
         
-        # 创建优化器
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
-        
-        # 探索参数
         self.epsilon_start = epsilon_start
         self.epsilon_final = epsilon_final
         self.epsilon_decay = epsilon_decay
-        
-        # 训练步数计数器
         self.steps_done = 0
     
     def select_action(self, state, evaluate=False):
-        """
-        根据当前状态选择动作
-        
-        参数:
-            state: 当前状态
-            evaluate: 是否处于评估模式 (不使用探索)
-            
-        返回:
-            选择的动作
-        """
-        # 计算当前探索率
         epsilon = self.epsilon_final + (self.epsilon_start - self.epsilon_final) * \
                  np.exp(-1. * self.steps_done / self.epsilon_decay)
-        
         self.steps_done += 1
-        
-        # 评估模式或随机数大于探索率时，使用贪婪策略
         if evaluate or random.random() > epsilon:
             with torch.no_grad():
                 state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
                 q_values = self.model(state_tensor)
                 return q_values.max(1)[1].item()
         else:
-            # 随机探索
             return random.randrange(self.env.action_space.n)
     
     def update_model(self):
-        """
-        更新模型参数
-        """
-        # 如果经验不足，不进行更新
         if len(self.memory) < self.batch_size:
             return 0.0
         
-        # 从经验回放缓冲区采样
         if isinstance(self.memory, PrioritizedReplayBuffer):
-            # 优先经验回放返回7个值
-            states, actions, rewards, next_states, dones, indices, weights = self.memory.sample(self.batch_size)
+            states, actions, rewards, next_states, dones, tree_indices, weights = self.memory.sample(self.batch_size)
             weights = weights.to(self.device)
+            # Store tree_indices for priority update
+            # In the old version, 'indices' were buffer indices, now they are tree_indices
+            update_indices = tree_indices
         else:
-            # 普通经验回放返回5个值
             states, actions, rewards, next_states, dones = self.memory.sample(self.batch_size)
-            indices = None
+            update_indices = None
             weights = torch.ones_like(rewards).to(self.device)
         
-        # 将数据转移到设备
         states = states.to(self.device)
         actions = actions.to(self.device)
         rewards = rewards.to(self.device)
         next_states = next_states.to(self.device)
         dones = dones.to(self.device)
         
-        # 计算当前Q值
         q_values = self.model(states).gather(1, actions)
         
-        # 计算目标Q值 (使用目标网络)
         with torch.no_grad():
-            # 双DQN: 使用主网络选择动作，使用目标网络评估动作
-            next_q_values = self.model(next_states)
-            next_actions = next_q_values.max(1)[1].unsqueeze(1)
+            next_q_values_model = self.model(next_states)
+            next_actions = next_q_values_model.max(1)[1].unsqueeze(1)
             next_q_values_target = self.target_model(next_states).gather(1, next_actions)
-            
-            # 计算目标值 (r + gamma * max Q(s', a'))
             target_q_values = rewards + (1 - dones) * self.gamma * next_q_values_target
         
-        # 计算损失
         td_errors = torch.abs(q_values - target_q_values)
-        loss = (td_errors * weights).mean()
+        loss = (td_errors * weights).mean() # td_errors needs to be [batch_size, 1] like weights
         
-        # 更新优先级 (如果使用优先经验回放)
-        if isinstance(self.memory, PrioritizedReplayBuffer) and indices is not None:
-            priorities = td_errors.detach().cpu().numpy().flatten() + 1e-6  # 添加小值防止优先级为0
-            self.memory.update_priorities(indices, priorities)
+        if isinstance(self.memory, PrioritizedReplayBuffer) and update_indices is not None:
+            # Pass raw TD errors (detached from graph, on CPU)
+            td_errors_numpy = td_errors.detach().cpu().numpy().flatten()
+            self.memory.update_priorities(update_indices, td_errors_numpy)
         
-        # 梯度下降
         self.optimizer.zero_grad()
         loss.backward()
-        # 梯度裁剪，防止梯度爆炸
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 10)
         self.optimizer.step()
         
         return loss.item()
     
     def update_target_model(self):
-        """
-        更新目标网络
-        """
         self.target_model.load_state_dict(self.model.state_dict())
     
     def save_model(self, path):
-        """
-        保存模型
-        """
         torch.save({
             'model_state_dict': self.model.state_dict(),
             'target_model_state_dict': self.target_model.state_dict(),
@@ -311,12 +358,7 @@ class DQNAgent:
         }, path)
     
     def load_model(self, path):
-        """
-        加载模型
-        """
         checkpoint = torch.load(path, weights_only=False)
-        
-        # 尝试加载模型状态，如果键不匹配则使用strict=False
         try:
             self.model.load_state_dict(checkpoint['model_state_dict'])
         except RuntimeError as e:
@@ -325,7 +367,6 @@ class DQNAgent:
                 self.model.load_state_dict(checkpoint['model_state_dict'], strict=False)
             else:
                 raise e
-        
         try:
             self.target_model.load_state_dict(checkpoint['target_model_state_dict'])
         except RuntimeError as e:
@@ -334,14 +375,11 @@ class DQNAgent:
                 self.target_model.load_state_dict(checkpoint['target_model_state_dict'], strict=False)
             else:
                 raise e
-        
-        # 优化器和步数可能不存在于旧版本的检查点中
         if 'optimizer_state_dict' in checkpoint:
             try:
                 self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             except Exception as e:
                 print(f"⚠️ 优化器状态加载失败，将使用默认状态: {e}")
-        
         if 'steps_done' in checkpoint:
             self.steps_done = checkpoint['steps_done']
         else:
@@ -355,144 +393,244 @@ class NStepBuffer:
     存储n步序列并计算n步回报
     """
     def __init__(self, n_step=3, gamma=0.99):
-        """
-        初始化N步缓冲区
-        
-        参数:
-            n_step: n步学习的步数
-            gamma: 折扣因子
-        """
         self.n_step = n_step
         self.gamma = gamma
         self.buffer = deque(maxlen=n_step)
     
     def add(self, state, action, reward, next_state, done):
-        """
-        添加一步经验到缓冲区
-        
-        参数:
-            state: 当前状态
-            action: 执行的动作
-            reward: 获得的奖励
-            next_state: 下一个状态
-            done: 是否结束
-            
-        返回:
-            如果缓冲区满了，返回n步经验；否则返回None
-        """
-        # Store the experience as a tuple: (state, action, reward, next_state, done)
         current_experience = Experience(state, action, reward, next_state, done)
         self.buffer.append(current_experience)
-        
         if len(self.buffer) < self.n_step:
             return None
         
-        # Calculate n-step reward and identify the n-step next_state and done
         n_step_reward = 0.0
         n_step_next_state = None
         n_step_done = False
-        
         for i in range(self.n_step):
             exp = self.buffer[i]
             n_step_reward += (self.gamma ** i) * exp.reward
-
             if exp.done:
                 n_step_next_state = exp.next_state
                 n_step_done = True
-                # This experience is the one that caused termination within the n-step window.
-                # The n-step transition will be from buffer[0] up to this experience.
-                # The remaining items in the buffer after this point are not part of this specific n-step transition's reward sum.
-                # The effective number of steps for this transition is i + 1.
-                # The 'next_state' for the n-step transition is the 'next_state' of this terminating experience.
-                break  # Stop accumulating reward
-
-            # If no early termination, the n-step_next_state and n_step_done come from the last element in the window
+                break
             if i == self.n_step - 1:
                 n_step_next_state = exp.next_state
                 n_step_done = exp.done
-
-        # The state and action are from the first element of the n-step sequence (which is now self.buffer[0] due to deque's nature)
         s0, a0, _, _, _ = self.buffer[0]
-        
-        # The returned transition is (state_0, action_0, n_step_reward, n_step_next_state_n, n_step_done_n)
-        # The deque will automatically discard self.buffer[0] on the next append if maxlen is reached.
-        # The returned transition is based on the oldest `n_step` experiences currently in the buffer.
         return Experience(s0, a0, n_step_reward, n_step_next_state, n_step_done)
     
     def get_last_n_step(self):
-        """
-        当游戏结束时，处理缓冲区中剩余的经验。
-        为缓冲区中剩余的每个状态，构造一个n-step（或更短）的转换。
-        """
-        # This method is called when an episode ends (done=True for the last experience added).
-        # The main buffer (e.g. ReplayBuffer) will receive these transitions.
-        # The NStepBuffer itself will be reset after this.
-
-        # Example: n_step = 3, buffer has [T0, T1] when episode ends.
-        # T0 = (s0, a0, r0, s1, d0=false)
-        # T1 = (s1, a1, r1, s2, d1=true)
-        #
-        # We need to form transitions for T0.
-        # For T0:
-        #   Reward: r0 + gamma*r1
-        #   Next State: s2 (from T1.next_state)
-        #   Done: True (from T1.done)
-        # Result: (s0, a0, r0 + gamma*r1, s2, True)
-
-        # If the buffer is not empty after an episode ends, these are partial n-step transitions.
-        # The `add` method already processed and returned full n-step transitions.
-        # This method processes what's left, which will be less than n_step items usually.
-        # Or, if an episode ends exactly when buffer becomes full, `add` returns the full one,
-        # and this method would be called with a full buffer too, but `RainbowAgent` calls `reset`
-        # after `get_last_n_step`, so we need to make sure this doesn't double-add.
-        # The `RainbowAgent` calls `add`, then if `done`, calls `get_last_n_step`, then `reset`.
-        # So, `get_last_n_step` should process all items currently in `self.buffer`.
-
         experiences_to_return = []
-
-        # Iterate through the experiences currently in the buffer.
-        # Each experience self.buffer[j] will be the *start* of an n-step transition.
         for j in range(len(self.buffer)):
             n_step_reward = 0.0
             n_step_next_state = None
             n_step_done = False
-            
-            # Calculate reward and find next_state/done for the transition starting at self.buffer[j]
             for i in range(self.n_step):
                 current_idx_in_buffer = j + i
                 if current_idx_in_buffer >= len(self.buffer):
-                    # We've run out of experiences in the buffer for this n-step calculation
-                    # This means the n_step_next_state and n_step_done are from the last actual experience in the buffer
-                    if i > 0: # Make sure we have at least one step
+                    if i > 0:
                         n_step_next_state = self.buffer[-1].next_state
                         n_step_done = self.buffer[-1].done
-                    else: # Should not happen if len(self.buffer) > 0
-                        pass
                     break
-
                 exp = self.buffer[current_idx_in_buffer]
                 n_step_reward += (self.gamma ** i) * exp.reward
-
                 if exp.done:
                     n_step_next_state = exp.next_state
                     n_step_done = True
-                    break # Stop accumulating reward, this is the end of the episode
-
-                # If loop finishes without early break, next_state/done are from the last considered experience
+                    break
                 if i == self.n_step - 1 or current_idx_in_buffer == len(self.buffer) - 1:
                     n_step_next_state = exp.next_state
                     n_step_done = exp.done
-
             start_exp = self.buffer[j]
             experiences_to_return.append(Experience(start_exp.state, start_exp.action, n_step_reward, n_step_next_state, n_step_done))
-            
         return experiences_to_return
     
     def reset(self):
-        """
-        重置缓冲区
-        """
         self.buffer.clear()
+
+class AdaptiveNStepBuffer:
+    """
+    Adaptive N-step Learning Buffer.
+    Dynamically adjusts N based on TD error history. It stores experiences up to `max_n_step`
+    to allow N to grow, but forms n-step returns based on `current_n_step`.
+
+    Args:
+        base_n_step (int): The minimum/starting value for N.
+        max_n_step (int): The maximum value N can take.
+        gamma (float): Discount factor.
+        td_error_history_size (int): How many recent TD errors to store for averaging.
+        td_error_threshold_low (float): If avg TD error is below this, N may decrease.
+        td_error_threshold_high (float): If avg TD error is above this, N may increase.
+        n_step_increment (int): How much to increase N by at a time.
+        n_step_decrement (int): How much to decrease N by at a time.
+    """
+    def __init__(self, base_n_step, max_n_step, gamma,
+                 td_error_history_size=100,
+                 td_error_threshold_low=0.1,
+                 td_error_threshold_high=0.5,
+                 n_step_increment=1,
+                 n_step_decrement=1):
+        self.base_n_step = base_n_step
+        self.max_n_step = max_n_step
+        self.gamma = gamma
+        self.current_n_step = base_n_step # Current N value used for forming returns
+
+        # Internal buffer stores up to max_n_step experiences to allow N to grow.
+        self.buffer = deque(maxlen=max_n_step)
+        self.td_error_history = deque(maxlen=td_error_history_size) # Stores recent TD errors
+
+        self.td_error_threshold_low = td_error_threshold_low
+        self.td_error_threshold_high = td_error_threshold_high
+        self.n_step_increment = n_step_increment
+        self.n_step_decrement = n_step_decrement
+
+        print(f"AdaptiveNStepBuffer initialized: base_n={base_n_step}, max_n={max_n_step}, current_n={self.current_n_step}")
+
+    def add(self, state, action, reward, next_state, done):
+        current_experience = Experience(state, action, reward, next_state, done)
+        self.buffer.append(current_experience) # Add to the right (end) of the deque
+
+        # Check if we have enough experiences to form at least one n-step sequence
+        # based on the current_n_step.
+        if len(self.buffer) >= self.current_n_step:
+            # Form the n-step experience from the leftmost (oldest) `current_n_step` items.
+            n_step_reward = 0.0
+            actual_n_used = 0 # Number of steps actually used (can be < current_n_step if episode ends)
+            n_step_final_next_state = None
+            n_step_final_done = False
+
+            for i in range(self.current_n_step):
+                exp = self.buffer[i] # Experience at step t+i from the start of the window
+                n_step_reward += (self.gamma ** i) * exp.reward
+                actual_n_used = i + 1
+                if exp.done: # Episode ended within the n-step window
+                    n_step_final_next_state = exp.next_state
+                    n_step_final_done = True
+                    break
+                if i == self.current_n_step - 1: # Reached the end of the current_n_step window
+                    n_step_final_next_state = exp.next_state
+                    n_step_final_done = exp.done
+
+            s0, a0, _, _, _ = self.buffer[0] # Initial state and action of the n-step sequence
+
+            # Remove the oldest experience (s0, a0, ...) to slide the window.
+            self.buffer.popleft()
+
+            return Experience(s0, a0, n_step_reward, n_step_final_next_state, n_step_final_done)
+
+        return None # Not enough elements yet to form an n-step sequence based on current_n_step
+
+    def record_td_error(self, td_error):
+        """Records a TD error to the history for N-step adaptation."""
+        self.td_error_history.append(abs(td_error))
+
+    def adapt_n_step(self):
+        if not self.td_error_history: # or len(self.td_error_history) < some_min_samples
+            return
+
+        avg_td_error = np.mean(list(self.td_error_history))
+        # The deque `td_error_history` automatically manages its size via `maxlen`.
+        # No need to clear explicitly if we want a sliding window average.
+
+        prev_n_step = self.current_n_step
+        # Increase N if error is high and N is below max
+        if avg_td_error > self.td_error_threshold_high and self.current_n_step < self.max_n_step:
+            self.current_n_step = min(self.current_n_step + self.n_step_increment, self.max_n_step)
+        # Decrease N if error is low and N is above base
+        elif avg_td_error < self.td_error_threshold_low and self.current_n_step > self.base_n_step:
+            self.current_n_step = max(self.current_n_step - self.n_step_decrement, self.base_n_step)
+
+        if prev_n_step != self.current_n_step:
+            print(f"AdaptiveNStep: N changed from {prev_n_step} to {self.current_n_step} (Avg TD Error: {avg_td_error:.4f})")
+            # Note: Changing current_n_step affects how many items `add()` requires before returning
+            # an n-step experience and how many items it pops. The internal `self.buffer`
+            # (with maxlen=max_n_step) remains the source of experiences.
+
+    def get_last_n_step(self):
+        """
+        Processes remaining experiences in the buffer at the end of an episode.
+        For each experience that could be the start of an n-step sequence (up to current_n_step),
+        it forms the n-step return.
+        """
+        experiences_to_return = []
+        # Create a temporary list from the deque to iterate without modification issues
+        # as `self.buffer` might be modified if `add` was called by an external process (not typical here).
+        # However, this method is usually called after the episode is truly done.
+
+        # The internal buffer `self.buffer` contains the last `len(self.buffer)` experiences.
+        # We need to form n-step returns for sequences starting at each possible point
+        # within this buffer.
+        # Example: buffer = [e0, e1, e2], current_n_step = 3
+        #   - Returns n-step for (e0, e1, e2)
+        #   - Then, conceptually, for (e1, e2) if it were shorter than n_step
+        #   - Then, for (e2)
+        # This is similar to how NStepBuffer's get_last_n_step worked in the original fixed-N version.
+
+        # We iterate through the current buffer, considering each element as a potential start.
+        # The number of items to process for n-step return from that start point is
+        # min(current_n_step, number_of_remaining_items_in_buffer_from_start).
+
+        # Create a snapshot for safe iteration, as the main buffer should not be modified here.
+        # The `AdaptiveNStepBuffer.add` method with `popleft` means `self.buffer` contains
+        # less than `current_n_step` items typically by the time `get_last_n_step` is called,
+        # because `add` only returns None if `len(buffer) < current_n_step` *after* append.
+        # `get_last_n_step` is called after the *final* `done` for an episode.
+        # The `store_experience` method calls `n_step_buffer.add()`, then if `done`, calls `get_last_n_step()`, then `reset()`.
+        # So, `self.buffer` at this point contains the tail end experiences that did not yet form a full `current_n_step` sequence
+        # and were not popped by `add`.
+
+        # Example: current_n=3. Buffer has [e_final-1, e_final].
+        # For e_final-1: n-step uses [e_final-1, e_final].
+        # For e_final: n-step uses [e_final].
+
+        temp_processing_buffer = list(self.buffer)
+
+        for j in range(len(temp_processing_buffer)): # j is the starting index in temp_processing_buffer
+            n_step_reward = 0.0
+            actual_n_used = 0
+            n_step_next_state = None
+            n_step_done = False # Default for the transition
+
+            # Calculate reward and find next_state/done for the transition starting at temp_processing_buffer[j]
+            # The window size for these tail-end transitions should still be guided by current_n_step,
+            # but practically limited by available data or episode termination.
+            for i in range(self.current_n_step):
+                current_idx_in_temp_buffer = j + i
+                if current_idx_in_temp_buffer >= len(temp_processing_buffer):
+                    # Ran out of experiences in the temp_buffer for this n-step calculation.
+                    # This means the n_step_next_state and n_step_done are from the last actual experience processed.
+                    if i > 0: # Ensure at least one step was processed.
+                        # This state should ideally not be reached if logic is correct,
+                        # as break on exp.done or end of loop should set these.
+                        # Fallback to last item in temp_buffer if necessary.
+                        n_step_next_state = temp_processing_buffer[-1].next_state
+                        n_step_done = temp_processing_buffer[-1].done
+                    break
+
+                exp = temp_processing_buffer[current_idx_in_temp_buffer]
+                n_step_reward += (self.gamma ** i) * exp.reward
+                actual_n_used = i + 1
+
+                if exp.done: # Episode terminated within this n-step window
+                    n_step_next_state = exp.next_state
+                    n_step_done = True
+                    break
+
+                # If loop finishes, or it's the last available item for this starting point j
+                if i == self.current_n_step - 1 or current_idx_in_temp_buffer == len(temp_processing_buffer) - 1:
+                    n_step_next_state = exp.next_state
+                    n_step_done = exp.done
+
+            if actual_n_used > 0: # Only add if at least one step was processed
+                 start_exp = temp_processing_buffer[j]
+                 experiences_to_return.append(Experience(start_exp.state, start_exp.action, n_step_reward, n_step_next_state, n_step_done))
+        return experiences_to_return
+
+    def reset(self):
+        self.buffer.clear()
+        self.td_error_history.clear()
+        # Optional: reset n_step to base_n_step, or let it persist across episodes
+        # print(f"AdaptiveNStepBuffer reset. Current N is {self.current_n_step}")
 
 
 class RainbowAgent(DQNAgent):
@@ -502,308 +640,228 @@ class RainbowAgent(DQNAgent):
     Multi-step Learning, Noisy Networks, Distributional DQN
     """
     def __init__(self, model, target_model, env, device,
-                 n_step=3, use_noisy=True, use_distributional=False,
-                 n_atoms=51, v_min=-10, v_max=10, **kwargs):
-        """
-        初始化Rainbow智能体
-        
-        参数:
-            model: 主Q网络 (RainbowDQN)
-            target_model: 目标Q网络
-            env: 游戏环境
-            device: 计算设备
-            n_step: n步学习的步数
-            use_noisy: 是否使用噪声网络
-            use_distributional: 是否使用分布式Q学习
-            n_atoms: 分布式Q学习的原子数量
-            v_min: 值函数的最小值
-            v_max: 值函数的最大值
-            **kwargs: 其他DQN参数
-        """
-        # 如果使用噪声网络，禁用epsilon探索
+                 base_n_step=3, max_n_step=10,       # Renamed n_step to base_n_step, added max_n_step
+                 adapt_n_step_freq=1000,      # Frequency to call adapt_n_step
+                 td_error_threshold_low=0.1,  # Thresholds for N-step adaptation
+                 td_error_threshold_high=0.5,
+                 augmentation_config=None,    # For Experience Augmentation
+                 use_noisy=True, use_distributional=False,
+                 n_atoms=51, v_min=-10, v_max=10, **kwargs): # Removed n_step from here, use base_n_step
         if use_noisy:
             kwargs['epsilon_start'] = 0.0
             kwargs['epsilon_final'] = 0.0
             kwargs['epsilon_decay'] = 1
-        
-        # 默认使用优先经验回放
         if 'prioritized_replay' not in kwargs:
             kwargs['prioritized_replay'] = True
             
         super().__init__(model, target_model, env, device, **kwargs)
         
-        self.n_step = n_step
+        # self.n_step (from parent DQNAgent or original kwargs) is not used directly by AdaptiveNStepBuffer
+        # base_n_step is now the explicit parameter for the initial/minimum N.
         self.use_noisy = use_noisy
         self.use_distributional = use_distributional
         self.n_atoms = n_atoms
         self.v_min = v_min
         self.v_max = v_max
         
-        # 初始化n步缓冲区
-        self.n_step_buffer = NStepBuffer(n_step, self.gamma)
-        
-        # 分布式Q学习相关
+        self.n_step_buffer = AdaptiveNStepBuffer(
+            base_n_step=base_n_step,
+            max_n_step=max_n_step,
+            gamma=self.gamma, # DQNAgent sets self.gamma
+            td_error_threshold_low=td_error_threshold_low,
+            td_error_threshold_high=td_error_threshold_high
+            # n_step_increment and n_step_decrement use defaults in AdaptiveNStepBuffer
+        )
+        self.adapt_n_step_freq = adapt_n_step_freq
+        self.training_steps_count = 0 # Counter for adapt_n_step frequency
+
+        if augmentation_config:
+            self.augmenter = ExperienceAugmenter(augmentation_config)
+            print("Experience Augmentation enabled.")
+        else:
+            self.augmenter = None
+
         if use_distributional:
             self.delta_z = (v_max - v_min) / (n_atoms - 1)
             self.support = torch.linspace(v_min, v_max, n_atoms).to(device)
     
     def select_action(self, state, evaluate=False):
-        """
-        选择动作
-        """
-        # 如果使用噪声网络，直接使用贪婪策略
         if self.use_noisy:
             with torch.no_grad():
                 state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
-                
                 if self.use_distributional:
-                    # 分布式Q学习：计算期望Q值
-                    # self.model(state_tensor) already returns softmaxed probabilities for RainbowDQN
-                    dist = self.model(state_tensor)  # [batch, actions, atoms]
-                    q_values = (dist * self.support).sum(2)  # [batch, actions]
+                    dist = self.model(state_tensor)
+                    q_values = (dist * self.support).sum(2)
                 else:
                     q_values = self.model(state_tensor)
-                
                 return q_values.max(1)[1].item()
         else:
-            # 使用父类的epsilon-greedy策略
             return super().select_action(state, evaluate)
     
     def store_experience(self, state, action, reward, next_state, done):
-        """
-        存储经验到n步缓冲区和回放缓冲区
-        """
-        # 添加到n步缓冲区
-        n_step_exp = self.n_step_buffer.add(state, action, reward, next_state, done)
-        
-        # 如果n步缓冲区满了，将n步经验存入回放缓冲区
+        # Augment experience if augmenter is enabled
+        current_state, current_action, current_reward, current_next_state, current_done = state, action, reward, next_state, done
+        if self.augmenter:
+            # Assuming augment returns the full tuple, but we only use augmented states for now
+            # And we are careful not to modify original action, reward, done for this specific stored experience
+            aug_s, _, _, aug_ns, _ = self.augmenter.augment(state, action, reward, next_state, done)
+            current_state, current_next_state = aug_s, aug_ns
+            # print("DEBUG: Augmented state stored.") # For debugging
+
+        n_step_exp = self.n_step_buffer.add(current_state, current_action, current_reward, current_next_state, current_done)
         if n_step_exp is not None:
-            n_state, n_action, n_reward, n_next_state, n_done = n_step_exp
-            self.memory.push(n_state, n_action, n_reward, n_next_state, n_done)
-        
-        # 如果游戏结束，处理缓冲区中剩余的经验
+            self.memory.push(n_step_exp.state, n_step_exp.action, n_step_exp.reward, n_step_exp.next_state, n_step_exp.done)
         if done:
             remaining_exps = self.n_step_buffer.get_last_n_step()
             for exp in remaining_exps:
-                exp_state, exp_action, exp_reward, exp_next_state, exp_done = exp
-                self.memory.push(exp_state, exp_action, exp_reward, exp_next_state, exp_done)
+                self.memory.push(exp.state, exp.action, exp.reward, exp.next_state, exp.done)
             self.n_step_buffer.reset()
     
     def update_model(self):
-        """
-        更新模型参数
-        """
-        # 如果经验不足，不进行更新
         if len(self.memory) < self.batch_size:
             return 0.0
         
-        # 重置噪声网络的噪声
         if self.use_noisy:
-            # Assuming RainbowDQN model has sample_noise method as per model.py
-            if hasattr(self.model, 'sample_noise'):
-                self.model.sample_noise()
-            if hasattr(self.target_model, 'sample_noise'):
-                self.target_model.sample_noise()
+            if hasattr(self.model, 'sample_noise'): self.model.sample_noise()
+            if hasattr(self.target_model, 'sample_noise'): self.target_model.sample_noise()
         
-        # 从经验回放缓冲区采样
         if isinstance(self.memory, PrioritizedReplayBuffer):
-            states, actions, rewards, next_states, dones, indices, weights = self.memory.sample(self.batch_size)
+            states, actions, rewards, next_states, dones, tree_indices, weights = self.memory.sample(self.batch_size)
             weights = weights.to(self.device)
+            update_indices = tree_indices # For PER
         else:
             states, actions, rewards, next_states, dones = self.memory.sample(self.batch_size)
-            indices = None
+            update_indices = None
             weights = torch.ones_like(rewards).to(self.device)
         
-        # 将数据转移到设备
         states = states.to(self.device)
         actions = actions.to(self.device)
-        rewards = rewards.to(self.device)
+        rewards = rewards.to(self.device) # These are already n-step rewards from the buffer
         next_states = next_states.to(self.device)
-        dones = dones.to(self.device)
+        dones = dones.to(self.device) # This 'done' is the n-step done
         
+        # Loss calculation uses self.n_step_buffer.current_n_step for discounting Q(s',a')
         if self.use_distributional:
             loss = self._compute_distributional_loss(states, actions, rewards, next_states, dones, weights)
         else:
             loss = self._compute_standard_loss(states, actions, rewards, next_states, dones, weights)
         
-        # 更新优先级
-        if isinstance(self.memory, PrioritizedReplayBuffer) and indices is not None:
-            # 为了计算TD误差，我们需要重新计算一下
-            with torch.no_grad():
-                if self.use_distributional:
-                    # self.model(states) already returns softmaxed probabilities
-                    current_dist_probs = self.model(states)
-                    current_q = (current_dist_probs * self.support).sum(2)
-                    current_q_selected = current_q.gather(1, actions)
-                    
-                    # self.target_model(next_states) already returns softmaxed probabilities
-                    next_dist_probs_target = self.target_model(next_states)
-                    # For PER TD error, we usually use the main network for action selection (Double DQN style)
-                    # but for consistency with how loss target is calculated, let's use target Q for TD error target.
-                    # Actually, the loss calculation for distributional uses model for next_actions and target_model for next_dist.
-                    # To be consistent with the actual loss's target, we should replicate that logic.
+        # Calculate TD errors for PER update and N-step adaptation
+        td_errors_numpy = None
+        with torch.no_grad(): # All calculations for TD error should not affect gradients
+            if self.use_distributional:
+                # For distributional, TD error is often |E[Q(s,a)] - (r + gamma^N * E[Q(s',a')])|
+                # Re-calculate current Q's expected value for selected actions
+                current_dist_probs_model = self.model(states)
+                current_q_selected_dist_probs = current_dist_probs_model.gather(1, actions.unsqueeze(2).expand(-1, -1, self.n_atoms)).squeeze(1)
+                current_q_selected_expected = (current_q_selected_dist_probs * self.support.unsqueeze(0)).sum(1, keepdim=True)
 
-                    # Replicating Double DQN logic for next actions from _compute_distributional_loss
-                    next_dist_model = self.model(next_states) # Probs from model
-                    next_q_model = (next_dist_model * self.support).sum(2)
-                    next_actions_for_td = next_q_model.max(1)[1].unsqueeze(1) # Use model for action selection
-                    
-                    # Get next distribution from target network using these actions
-                    next_dist_target_net_for_td = self.target_model(next_states) # Probs from target_model
-                    # Gather the distributions for the best actions selected by the main model
-                    next_best_dist_target_net = next_dist_target_net_for_td.gather(1, next_actions_for_td.unsqueeze(2).expand(-1, -1, self.n_atoms)).squeeze(1)
+                # Re-calculate target Q's expected value (Double DQN style for action selection)
+                next_dist_probs_model = self.model(next_states)
+                next_q_values_model = (next_dist_probs_model * self.support.unsqueeze(0)).sum(2)
+                next_actions = next_q_values_model.max(1)[1].unsqueeze(1)
 
-                    next_q_max = (next_best_dist_target_net * self.support.unsqueeze(0)).sum(1).unsqueeze(1)
+                next_dist_probs_target_net = self.target_model(next_states)
+                next_best_dist_target_net = next_dist_probs_target_net.gather(1, next_actions.unsqueeze(2).expand(-1, -1, self.n_atoms)).squeeze(1)
+                next_q_max_expected = (next_best_dist_target_net * self.support.unsqueeze(0)).sum(1, keepdim=True)
 
-                    target_q = rewards + (1 - dones) * (self.gamma ** self.n_step) * next_q_max
-                    td_errors = torch.abs(current_q_selected - target_q)
-                else:
-                    current_q = self.model(states).gather(1, actions)
-                    next_q_values = self.model(next_states)
-                    next_actions = next_q_values.max(1)[1].unsqueeze(1)
-                    next_q_target = self.target_model(next_states).gather(1, next_actions)
-                    target_q = rewards + (1 - dones) * (self.gamma ** self.n_step) * next_q_target
-                    td_errors = torch.abs(current_q - target_q)
+                # Target Q value for TD error calculation
+                # rewards are already n-step rewards from buffer
+                target_q_for_td_error = rewards + (1 - dones) * (self.gamma ** self.n_step_buffer.current_n_step) * next_q_max_expected
+                td_errors = torch.abs(current_q_selected_expected - target_q_for_td_error)
+            else: # Standard DQN
+                current_q_model_vals = self.model(states).gather(1, actions)
                 
-                priorities = td_errors.detach().cpu().numpy().flatten() + 1e-6
-                self.memory.update_priorities(indices, priorities)
+                next_q_values_model = self.model(next_states)
+                next_actions = next_q_values_model.max(1)[1].unsqueeze(1)
+                next_q_target_net = self.target_model(next_states).gather(1, next_actions)
+
+                # Target Q value for TD error calculation
+                # rewards are already n-step rewards from buffer
+                target_q_for_td_error = rewards + (1 - dones) * (self.gamma ** self.n_step_buffer.current_n_step) * next_q_target_net
+                td_errors = torch.abs(current_q_model_vals - target_q_for_td_error)
+
+            td_errors_numpy = td_errors.detach().cpu().numpy().flatten()
+
+        # Update PER priorities if applicable
+        if isinstance(self.memory, PrioritizedReplayBuffer) and update_indices is not None and td_errors_numpy is not None:
+            self.memory.update_priorities(update_indices, td_errors_numpy)
         
-        # 梯度下降
+        # Record TD errors for N-step adaptation
+        if td_errors_numpy is not None: # Ensure td_errors were computed
+             self.n_step_buffer.record_td_error(np.mean(td_errors_numpy))
+
         self.optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 10)
         self.optimizer.step()
         
+        self.training_steps_count += 1
+        if self.training_steps_count % self.adapt_n_step_freq == 0:
+            self.n_step_buffer.adapt_n_step()
+            # Potentially log self.n_step_buffer.current_n_step here
+
         return loss.item()
     
     def _compute_standard_loss(self, states, actions, rewards, next_states, dones, weights):
-        """
-        计算标准DQN损失
-        """
-        # 计算当前Q值
         q_values = self.model(states).gather(1, actions)
-        
-        # 计算目标Q值
         with torch.no_grad():
-            # 双DQN
-            next_q_values = self.model(next_states)
-            next_actions = next_q_values.max(1)[1].unsqueeze(1)
+            next_q_values_model = self.model(next_states)
+            next_actions = next_q_values_model.max(1)[1].unsqueeze(1)
             next_q_values_target = self.target_model(next_states).gather(1, next_actions)
-            
-            # 使用n步折扣
-            target_q_values = rewards + (1 - dones) * (self.gamma ** self.n_step) * next_q_values_target
-        
-        # 计算损失
-        td_errors = torch.abs(q_values - target_q_values)
-        loss = (td_errors * weights).mean()
-        
+            # Use current_n_step from adaptive buffer for discounting future rewards
+            target_q_values = rewards + (1 - dones) * (self.gamma ** self.n_step_buffer.current_n_step) * next_q_values_target
+        # td_errors = torch.abs(q_values - target_q_values) # Ensure td_errors has shape [batch_size, 1]
+        td_errors = q_values - target_q_values # Loss is (q_values - target_q_values).pow(2) * weights or huber_loss
+        # Using Huber loss might be better, but for consistency with current td_errors = abs(...)
+        # loss = (td_errors.pow(2) * weights).mean() # This is MSE like
+        loss = (torch.abs(td_errors) * weights).mean() # This is MAE like, but original was also this for PER error calc
         return loss
     
     def _compute_distributional_loss(self, states, actions, rewards, next_states, dones, weights):
-        """
-        计算分布式Q学习损失 (C51算法)
-        """
         batch_size = states.size(0)
-        
-        # 计算当前分布
-        # self.model(states) returns probabilities from RainbowDQN's forward pass
         current_dist_probs = self.model(states)
-        # Gather the probabilities for the taken actions
         current_probs_selected = current_dist_probs.gather(1, actions.unsqueeze(2).expand(-1, -1, self.n_atoms)).squeeze(1)
-        # Convert to log probabilities for KL divergence calculation
-        current_log_probs_selected = current_probs_selected.log() # log(softmax(logits))
+        current_log_probs_selected = current_probs_selected.log()
         
-        # 计算目标分布
         with torch.no_grad():
-            # 使用主网络选择动作 (Double DQN)
-            # self.model(next_states) returns probabilities
             next_dist_probs_model = self.model(next_states)
             next_q_values_model = (next_dist_probs_model * self.support.unsqueeze(0)).sum(2)
             next_actions = next_q_values_model.max(1)[1]
             
-            # 使用目标网络评估动作 for chosen next_actions
-            # self.target_model(next_states) returns probabilities
             next_dist_probs_target_net = self.target_model(next_states)
             next_dist_target = next_dist_probs_target_net.gather(1, next_actions.unsqueeze(1).unsqueeze(2).expand(-1, -1, self.n_atoms)).squeeze(1)
             
-            # 计算目标支撑
-            rewards = rewards.expand(-1, self.n_atoms)
-            dones = dones.expand(-1, self.n_atoms)
-            support = self.support.expand(batch_size, -1)
+            rewards_exp = rewards.expand(-1, self.n_atoms)
+            dones_exp = dones.expand(-1, self.n_atoms)
+            support_exp = self.support.expand(batch_size, -1)
             
-            target_support = rewards + (1 - dones) * (self.gamma ** self.n_step) * support
+            # Use current_n_step from adaptive buffer for discounting future rewards
+            target_support = rewards_exp + (1 - dones_exp) * (self.gamma ** self.n_step_buffer.current_n_step) * support_exp
             target_support = target_support.clamp(self.v_min, self.v_max)
             
-            # 分布投影
             b = (target_support - self.v_min) / self.delta_z
             lower_indices = b.floor().long()
             upper_indices = b.ceil().long()
 
-            # Correct projection for cases where l == u (i.e., b is an integer)
-            # This ensures probability mass is not lost when Tz falls exactly on an atom.
-            # Apply corrections based on Kaixhin/Rainbow's approach:
-            # If l == u, it means Tz landed exactly on an atom.
-            # To ensure the distribution logic works with l and u,
-            # we can shift l down by 1 or u up by 1,
-            # provided they don't go out of bounds [0, n_atoms-1].
-            
-            # Only adjust l if it's equal to u AND u is not already 0 (so l can be moved to l-1)
-            l_eq_u_and_u_gt_0 = (lower_indices == upper_indices) & (upper_indices > 0)
-            lower_indices[l_eq_u_and_u_gt_0] -= 1
-
-            # Only adjust u if it's equal to l AND l is not already n_atoms-1 (so u can be moved to u+1)
-            # Note: the original l (before adjustment above) should be used for u's condition.
-            # However, if l was adjusted, l!=u now. So, this needs careful thought.
-            # Let's use the common formulation:
-            # l_orig = b.floor().long() -> used for u adjustment condition
-            # u_orig = b.ceil().long() -> used for l adjustment condition
-            # This is simpler:
-            # For elements where l_j = u_j (because b_j is an integer):
-            # If b_j = V_MIN (so l_j=u_j=0), the prob goes to atom 0. (u_j - b_j)=0, (b_j - l_j)=0. Error.
-            #   We need m[0] += p_j. This means (b_j-l_j) should be 1 for u_j, or (u_j-b_j) for l_j.
-            #   If l_j=0, u_j=0. If we make u_j=1, then (u_j-b_j)=1 for l_j=0. (b_j-l_j)=0 for u_j=1. Correct.
-            # If b_j = V_MAX (so l_j=u_j=N-1), the prob goes to atom N-1.
-            #   If l_j=N-1, u_j=N-1. If we make l_j=N-2, then (u_j-b_j)=0 for l_j=N-2. (b_j-l_j)=1 for u_j=N-1. Correct.
-
-            # Simpler fix for l=u (from reference):
-            # if l=u, then prob * (u-b) = 0 and prob * (b-l) = 0.
-            # The mass is assigned to l if u-b=1 and b-l=0, or to u if u-b=0, b-l=1.
-            # When l=u=b (integer), we want all mass at index b.
-            # One way: if l==u, m[l] += prob. This can be done by setting (b-l) to 1 and (u-b) to 0 for index u,
-            # or vice-versa for index l.
-            # The logic `l[(u > 0) & (l == u)] -= 1` and `u[(l < (self.n_atoms - 1)) & (l == u)] += 1` (using original l for u's condition) handles this.
-
-            # Let's use a mask for l==u elements.
             eq_mask = (lower_indices == upper_indices)
             ne_mask = ~eq_mask
 
-            target_dist = torch.zeros_like(next_dist_target, device=self.device) # Shape (batch_size, n_atoms)
+            target_dist = torch.zeros_like(next_dist_target, device=self.device)
 
-            # Calculate contributions for non-equal l and u
-            m_l_contrib = next_dist_target * (upper_indices.float() - b) # Shape (batch_size, n_atoms)
-            m_u_contrib = next_dist_target * (b - lower_indices.float())  # Shape (batch_size, n_atoms)
+            m_l_contrib = next_dist_target * (upper_indices.float() - b)
+            m_u_contrib = next_dist_target * (b - lower_indices.float())
 
-            # Zero out contributions where l == u (i.e., where ne_mask is False)
             m_l_contrib_ne = torch.where(ne_mask, m_l_contrib, torch.zeros_like(m_l_contrib))
             m_u_contrib_ne = torch.where(ne_mask, m_u_contrib, torch.zeros_like(m_u_contrib))
 
-            target_dist.scatter_add_(1, lower_indices, m_l_contrib_ne)
-            target_dist.scatter_add_(1, upper_indices, m_u_contrib_ne)
+            target_dist.scatter_add_(1, lower_indices.clamp(0, self.n_atoms -1) , m_l_contrib_ne)
+            target_dist.scatter_add_(1, upper_indices.clamp(0, self.n_atoms -1), m_u_contrib_ne)
 
-            # Handle equal l and u (b is integer): add full probability to that atom
             if eq_mask.any():
-                # Create a source tensor that only has values from next_dist_target where eq_mask is true
                 src_eq = torch.where(eq_mask, next_dist_target, torch.zeros_like(next_dist_target))
-                # l (or u) where eq_mask is true gives the atom index.
-                # scatter_add_ will sum if multiple source elements map to the same target index,
-                # but here, for each batch item, l[eq_mask] should point to a unique atom for that batch item's sum.
-                # This is fine as we are adding the specific probability next_dist_target[eq_mask_indices] to target_dist[eq_mask_indices, l[eq_mask_indices]].
-                # The previous scatter_adds for m_l_contrib_ne and m_u_contrib_ne would have added 0 at these eq_mask locations.
-                target_dist.scatter_add_(1, lower_indices, src_eq) # Use full l, src_eq has zeros where eq_mask is false.
+                target_dist.scatter_add_(1, lower_indices.clamp(0, self.n_atoms -1), src_eq)
 
-        # 计算KL散度损失
-        # current_dist here should be log probabilities of selected actions
         loss = -(target_dist * current_log_probs_selected).sum(1)
         loss = (loss * weights.squeeze()).mean()
-        
         return loss

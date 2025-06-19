@@ -49,7 +49,7 @@ def parse_args():
         "--prioritized_replay", action="store_true", help="是否使用优先经验回放"
     )
     # Rainbow DQN 特有参数
-    parser.add_argument("--n_step", type=int, default=3, help="N步学习的步数")
+    # parser.add_argument("--n_step", type=int, default=3, help="N步学习的步数") # Replaced by base_n_step
     parser.add_argument("--use_noisy", action="store_true", help="是否使用噪声网络")
     parser.add_argument(
         "--use_distributional", action="store_true", help="是否使用分布式Q学习"
@@ -57,6 +57,18 @@ def parse_args():
     parser.add_argument("--n_atoms", type=int, default=51, help="分布式Q学习的原子数量")
     parser.add_argument("--v_min", type=float, default=-10, help="值函数的最小值")
     parser.add_argument("--v_max", type=float, default=10, help="值函数的最大值")
+
+    # Adaptive N-step parameters
+    parser.add_argument("--base_n_step", type=int, default=3, help="基础N步学习的步数 (用于AdaptiveNStepBuffer)")
+    parser.add_argument("--max_n_step", type=int, default=10, help="最大N步学习的步数 (用于AdaptiveNStepBuffer)")
+    parser.add_argument("--adapt_n_step_freq", type=int, default=1000, help="自适应N步调整频率 (训练步数)")
+    parser.add_argument("--td_error_threshold_low", type=float, default=0.1, help="用于降低N的TD误差阈值")
+    parser.add_argument("--td_error_threshold_high", type=float, default=0.5, help="用于增加N的TD误差阈值")
+
+    # Experience Augmentation parameters
+    parser.add_argument("--use_state_augmentation", action="store_true", help="是否启用状态增强")
+    parser.add_argument("--aug_noise_scale", type=float, default=5.0, help="高斯噪声增强的标准差 (基于0-255的像素值)") # Adjusted default based on uint8
+
     parser.add_argument(
         "--save_dir", type=str, default="checkpoints", help="模型保存目录"
     )
@@ -151,6 +163,11 @@ def train(args):
 
     # 创建智能体
     if args.model == "rainbow":
+        augmentation_config = None
+        if args.use_state_augmentation:
+            augmentation_config = {'add_noise': {'scale': args.aug_noise_scale}}
+            print(f"Augmentation enabled with config: {augmentation_config}")
+
         agent = RainbowAgent(
             model=model,
             target_model=target_model,
@@ -165,12 +182,18 @@ def train(args):
             epsilon_decay=args.epsilon_decay,
             target_update=args.target_update,
             prioritized_replay=args.prioritized_replay,
-            n_step=args.n_step,
+            # n_step=args.n_step, # Replaced by base_n_step for RainbowAgent with AdaptiveNStepBuffer
+            base_n_step=args.base_n_step,
+            max_n_step=args.max_n_step,
+            adapt_n_step_freq=args.adapt_n_step_freq,
+            td_error_threshold_low=args.td_error_threshold_low,
+            td_error_threshold_high=args.td_error_threshold_high,
             use_noisy=args.use_noisy,
             use_distributional=args.use_distributional,
             n_atoms=args.n_atoms,
             v_min=args.v_min,
             v_max=args.v_max,
+            augmentation_config=augmentation_config, # Pass augmentation config
         )
     else:
         agent = DQNAgent(

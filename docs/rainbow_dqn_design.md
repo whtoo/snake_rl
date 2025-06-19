@@ -13,12 +13,12 @@
 ## 架构实现状态
 
 ### 已完成的所有组件 ✅
-1. **Double DQN** - 在 [`agent.py:264-267`](src/agent.py:264) 实现
-2. **Dueling DQN** - 在 [`model.py:70-117`](src/model.py:70) 实现
-3. **Prioritized Experience Replay** - 在 [`agent.py:59-149`](src/agent.py:59) 实现
-4. **Multi-step Learning** - 在 [`agent.py:324-467`](src/agent.py:324) 实现 `NStepBuffer` 类
-5. **Noisy Networks** - 在 [`model.py:118-210`](src/model.py:118) 实现 `NoisyLinear` 类
-6. **Distributional DQN** - 在 [`model.py:211-305`](src/model.py:211) 和 [`agent.py:470-781`](src/agent.py:470) 完整实现
+1. **Double DQN** - 在 [`agent.py:278-281 (in DQNAgent), also see RainbowAgent._compute_standard_loss`](src/agent.py:278) 实现
+2. **Dueling DQN** - 在 [`model.py:70-119 (DuelingDQN class), also see RainbowDQN forward method`](src/model.py:70) 实现
+3. **Prioritized Experience Replay** - 在 [`agent.py:62-152`](src/agent.py:62) 实现
+4. **Multi-step Learning** - 在 [`agent.py:360-468`](src/agent.py:360) 实现 `NStepBuffer` 类
+5. **Noisy Networks** - 在 [`model.py:125-207`](src/model.py:125) 实现 `NoisyLinear` 类
+6. **Distributional DQN** - 在 [`model.py:210-302`](src/model.py:210) 和 [`agent.py:471-789`](src/agent.py:471) 完整实现
 
 ## Rainbow DQN 6个组件详解
 
@@ -26,7 +26,7 @@
 **作用**: 解决 Q 值过估计问题
 **实现**: 使用主网络选择动作，目标网络评估动作价值
 ```python
-# 现有实现位置: agent.py:264-267
+# 现有实现位置: agent.py:278-281 (in DQNAgent), also see RainbowAgent._compute_standard_loss
 next_q_values = self.model(next_states)
 next_actions = next_q_values.max(1)[1].unsqueeze(1)
 next_q_values_target = self.target_model(next_states).gather(1, next_actions)
@@ -36,7 +36,7 @@ next_q_values_target = self.target_model(next_states).gather(1, next_actions)
 **作用**: 分离状态价值和动作优势
 **实现**: Q(s,a) = V(s) + (A(s,a) - mean(A(s,a')))
 ```python
-# 现有实现位置: model.py:113-117
+# 现有实现位置: model.py:115-119 (in DuelingDQN), also see RainbowDQN forward method
 value = self.value_stream(conv_out)
 advantage = self.advantage_stream(conv_out)
 return value + advantage - advantage.mean(dim=1, keepdim=True)
@@ -44,33 +44,42 @@ return value + advantage - advantage.mean(dim=1, keepdim=True)
 
 ### 3. Prioritized Experience Replay ✅
 **作用**: 根据 TD 误差优先采样重要经验
-**实现**: 基于优先级的采样和重要性权重
+**实现**: 通过 `SumTree` 数据结构实现高效的优先级存储和采样。计算经验的优先级，并使用重要性采样 (IS) 权重来校正学习更新过程中的偏差。
 ```python
-# 现有实现位置: agent.py:103-136
-probs = prios ** self.alpha
-indices = np.random.choice(len(self.buffer), batch_size, p=probs)
-weights = (len(self.buffer) * probs[indices]) ** (-beta)
+# 实现位置: agent.py (PrioritizedReplayBuffer class with SumTree)
+# SumTree.add(priority, data_idx)
+# tree_idx, priority, data_idx = SumTree.get_leaf(s)
+# IS_weights = (N * P(i))^-beta
 ```
+**注意**: 当前实现使用 `SumTree`。原文档中基于`numpy`的`probs`计算方式已被替换。
 
-### 4. Multi-step Learning ✅
-**作用**: 使用 n 步回报减少偏差
-**公式**: R_t^(n) = r_t + γr_{t+1} + ... + γ^{n-1}r_{t+n-1} + γ^n Q(s_{t+n}, a_{t+n})
-**实现**: 在 [`agent.py:324-467`](src/agent.py:324) 实现 `NStepBuffer` 类
+### 4. Multi-step Learning & Adaptive N-step Learning ✅
+**作用**: 使用 n 步回报减少偏差，并动态调整n值以适应学习阶段。
+**公式 (n-step return)**: R_t^(n) = r_t + γr_{t+1} + ... + γ^{n-1}r_{t+n-1} + γ^n max_a' Q(s_{t+n}, a')
+**实现**: 通过 `AdaptiveNStepBuffer` 类在 [`agent.py`](src/agent.py) 中实现。
+- **Multi-step Learning**: `AdaptiveNStepBuffer` 内部计算n-step回报。
+- **Adaptive N-step Learning**: `AdaptiveNStepBuffer` 根据近期TD误差的均值动态调整 `current_n_step`。
+  - 如果平均TD误差高，增加 `n` (可能表明价值函数欠拟合，更长的轨迹有助于传播真实价值)。
+  - 如果平均TD误差低，减少 `n` (价值函数较稳定，较短的n可以减少方差)。
+  - `n` 的值在 `base_n_step` 和 `max_n_step` 之间调整。
 ```python
-# 实现位置: agent.py:324-467
-class NStepBuffer:
-    def __init__(self, n_step=3, gamma=0.99):
-        self.n_step = n_step
-        self.gamma = gamma
-        self.buffer = deque(maxlen=n_step)
+# 实现位置: agent.py (AdaptiveNStepBuffer class)
+class AdaptiveNStepBuffer:
+    def __init__(self, base_n_step, max_n_step, gamma, ...):
+        self.current_n_step = base_n_step
+        # ...
+    def add(self, state, action, reward, next_state, done):
+        # ... calculates n-step reward using self.current_n_step ...
+    def adapt_n_step(self):
+        # ... logic to adjust self.current_n_step based on TD error history ...
 ```
 
 ### 5. Noisy Networks ✅
 **作用**: 用可学习的噪声替代 ε-贪心探索
 **实现**: W = μ_W + σ_W ⊙ ε_W, b = μ_b + σ_b ⊙ ε_b
-**实现**: 在 [`model.py:118-210`](src/model.py:118) 实现 `NoisyLinear` 类
+**实现**: 在 [`model.py:125-207`](src/model.py:125) 实现 `NoisyLinear` 类
 ```python
-# 实现位置: model.py:118-210
+# 实现位置: model.py:125-207
 class NoisyLinear(nn.Module):
     def __init__(self, in_features, out_features, sigma_init=0.4):
         # 权重参数：均值和标准差
@@ -81,15 +90,32 @@ class NoisyLinear(nn.Module):
 ### 6. Distributional DQN ✅
 **作用**: 学习价值分布而非期望值
 **实现**: 使用 C51 算法实现分布式 Q 学习
-**实现**: 在 [`model.py:211-305`](src/model.py:211) 和 [`agent.py:470-781`](src/agent.py:470) 完整实现
+**实现**: 在 [`model.py:210-302`](src/model.py:210) 和 [`agent.py:471-789`](src/agent.py:471) 完整实现
 ```python
-# 实现位置: model.py:211-305, agent.py:470-781
+# 实现位置: model.py:210-302, agent.py:471-789
 class RainbowDQN(nn.Module):
     def __init__(self, input_shape, n_actions, n_atoms=51, v_min=-10, v_max=10):
         # 分布式 Q 学习参数
         self.n_atoms = n_atoms
         self.v_min = v_min
         self.v_max = v_max
+```
+
+### 7. Experience Augmentation (新增)
+**作用**: 通过对经验（主要是状态）进行增强，增加训练数据的多样性，可能提高模型的泛化能力和鲁棒性。
+**实现**: 通过 `ExperienceAugmenter` 类在 [`src/utils.py`](src/utils.py) 中实现。
+- 当前支持的增强方法：
+  - **高斯噪声 (Gaussian Noise)**: 向状态（图像帧）添加高斯噪声。噪声的标准差 (`scale`) 可配置。
+- `RainbowAgent` 在存储经验前，如果配置了增强器，会调用它来修改状态和下一状态。
+```python
+# 实现位置: utils.py (ExperienceAugmenter class)
+class ExperienceAugmenter:
+    def __init__(self, augmentation_config=None):
+        # augmentation_config = {'add_noise': {'scale': 5.0}}
+    def augment(self, state, action, reward, next_state, done):
+        # ... applies configured augmentations ...
+    def _add_gaussian_noise(self, state_image_stack, scale):
+        # ... adds noise and clips ...
 ```
 
 ## 技术架构设计
@@ -161,11 +187,6 @@ src/
 │   ├── DQNAgent             # 现有
 │   ├── NStepBuffer          # 新增 - N步缓冲区
 │   └── RainbowAgent         # 新增 - Rainbow智能体
-│
-├── rainbow_utils.py         # 新增 - Rainbow工具模块
-│   ├── NoisyUtils           # 噪声网络工具
-│   ├── DistributionalUtils  # 分布式DQN工具
-│   └── MultiStepUtils       # 多步学习工具
 │
 └── train.py                 # 修改训练脚本
     └── 添加 --model rainbow 选项
@@ -597,23 +618,23 @@ else:
 ## 实现总结
 
 ### ✅ 已完成的核心组件
-1. **NoisyLinear 层** - 在 [`model.py:118-210`](src/model.py:118) 实现
+1. **NoisyLinear 层** - 在 [`model.py:125-207`](src/model.py:125) 实现
    - ✅ 因子化噪声和独立噪声
    - ✅ 参数初始化和噪声采样
    - ✅ 完整的单元测试
 
-2. **NStepBuffer 缓冲区** - 在 [`agent.py:324-467`](src/agent.py:324) 实现
+2. **NStepBuffer 缓冲区** - 在 [`agent.py:360-468`](src/agent.py:360) 实现
    - ✅ n-step return 计算
    - ✅ 与现有经验回放集成
    - ✅ 边界情况处理
 
-3. **RainbowDQN 网络** - 在 [`model.py:211-305`](src/model.py:211) 实现
+3. **RainbowDQN 网络** - 在 [`model.py:210-302`](src/model.py:210) 实现
    - ✅ 集成 Dueling + Noisy 架构
    - ✅ 分布式输出头
    - ✅ 完整的前向传播逻辑
 
 ### ✅ 已完成的智能体集成
-4. **RainbowAgent 智能体** - 在 [`agent.py:470-781`](src/agent.py:470) 实现
+4. **RainbowAgent 智能体** - 在 [`agent.py:471-789`](src/agent.py:471) 实现
    - ✅ 继承现有 DQNAgent
    - ✅ 集成 n-step 学习
    - ✅ 噪声网络探索策略
