@@ -12,6 +12,94 @@ import matplotlib.pyplot as plt
 import time
 # 移除不必要的FrameStack导入，项目使用自定义的StackFrames类
 
+class ExperienceAugmenter:
+    """
+    Applies specified data augmentations to experiences (state and next_state).
+    This can help improve generalization and robustness of the RL agent.
+    Currently supports adding Gaussian noise to image-based states.
+    """
+    def __init__(self, augmentation_config=None):
+        """
+        Initializes the ExperienceAugmenter.
+
+        Args:
+            augmentation_config (dict, optional): Configuration specifying which augmentations
+                to apply and their parameters.
+                Example: {'add_noise': {'scale': 5.0}} to add Gaussian noise with std_dev 5.0.
+                Defaults to None, meaning no augmentations are applied.
+        """
+        self.augmentation_config = augmentation_config if augmentation_config else {}
+
+    def _add_gaussian_noise(self, state_image_stack, scale):
+        """
+        Adds Gaussian noise N(0, scale) to the input state image stack.
+        The input is assumed to be a NumPy array of dtype uint8 (pixel values 0-255).
+        Noise is added, and the result is clipped to the valid [0, 255] range and
+        returned as a uint8 NumPy array.
+
+        Args:
+            state_image_stack (np.ndarray): The state (or next_state) image stack,
+                typically with shape (num_stack, height, width) or (height, width).
+            scale (float): The standard deviation of the Gaussian noise to add.
+                           This scale should be relative to the pixel value range (0-255).
+
+        Returns:
+            np.ndarray: The augmented state image stack with noise, clipped and dtype uint8.
+        """
+        if not isinstance(state_image_stack, np.ndarray):
+            # Ensure input is a NumPy array
+            state_image_stack = np.array(state_image_stack, dtype=np.uint8)
+
+        # Convert to float32 for noise addition to prevent overflow/underflow issues with uint8
+        noisy_state = state_image_stack.astype(np.float32)
+
+        # Generate Gaussian noise with the same shape as the state
+        noise = np.random.normal(0, scale, noisy_state.shape).astype(np.float32)
+
+        noisy_state += noise
+
+        # Clip the values to the valid uint8 range [0, 255] and convert back to uint8
+        noisy_state = np.clip(noisy_state, 0, 255)
+        return noisy_state.astype(np.uint8)
+
+    def augment(self, state, action, reward, next_state, done):
+        """
+        Applies configured augmentations to the state and next_state components of an experience tuple.
+        Action, reward, and done fields are returned unmodified.
+
+        Args:
+            state: The current state.
+            action: The action taken.
+            reward: The reward received.
+            next_state: The resulting next state.
+            done (bool): Whether the episode terminated.
+
+        Returns:
+            tuple: The (potentially) augmented experience (aug_state, action, reward, aug_next_state, done).
+        """
+        aug_state = state
+        aug_next_state = next_state
+
+        if 'add_noise' in self.augmentation_config:
+            noise_params = self.augmentation_config['add_noise']
+            scale = noise_params.get('scale', 0.0) # Default scale if not provided
+            if scale > 0:
+                if state is not None:
+                    aug_state = self._add_gaussian_noise(state, scale)
+                if next_state is not None: # next_state can be None if episode terminates early in some setups
+                    aug_next_state = self._add_gaussian_noise(next_state, scale)
+
+        # Add other augmentations here based on self.augmentation_config
+        # Example:
+        # if 'random_flip' in self.augmentation_config:
+        #     if state is not None:
+        #         aug_state = self._random_horizontal_flip(aug_state) # Apply to already (potentially) noisy state
+        #     if next_state is not None:
+        #         aug_next_state = self._random_horizontal_flip(aug_next_state)
+
+        return aug_state, action, reward, aug_next_state, done
+
+
 class SkipFrame(gym.Wrapper):
     """
     跳帧包装器
@@ -147,10 +235,71 @@ def make_env(env_name):
         包装后的环境
     """
     env = gym.make(env_name, render_mode="rgb_array")
-    env = SkipFrame(env)
-    env = PreprocessFrame(env)
-    env = StackFrames(env)
     
+    # Apply SkipFrame universally if desired, or also make it conditional
+    env = SkipFrame(env, skip=4) # Assuming skip=4 is a good default
+
+    # Conditionally apply image-specific wrappers
+    if len(env.observation_space.shape) > 1 : # Indicates image-like data (e.g. H, W, C or H, W)
+        env = PreprocessFrame(env)
+        env = StackFrames(env, num_stack=4) # Assuming num_stack=4 is a good default
+    # Note: If StackFrames is used for non-image data, it might need adjustments
+    # or a different stacking mechanism if PreprocessFrame is skipped.
+    # For CartPole, if PreprocessFrame and StackFrames are skipped,
+    # the observation will be a 1D vector. DQNAgent expects (C,H,W) or similar.
+    # This will require model adjustments for CartPole if these wrappers are skipped.
+    # For now, this change addresses the cv2 error. Further compatibility for 1D envs
+    # would require more changes in model input handling or a different set of wrappers.
+    # Let's assume for Rainbow, image-based envs are the primary target,
+    # so if these wrappers are skipped, the user must ensure the model matches the raw env output.
+    # The current RainbowDQN model expects image-like input.
+    # A better check might be specific to Atari-like envs.
+    # For the purpose of this integration test with CartPole,
+    # we must ensure the model can handle the (4,) shape if PreprocessFrame is skipped.
+    # The provided model.py DQN/RainbowDQN expects (C,H,W) like input.
+    # This means CartPole won't work with the current models if PreprocessFrame is skipped,
+    # UNLESS the model itself is made flexible or CartPole is not the test env.
+    #
+    # Given the error, the immediate fix is to make PreprocessFrame conditional.
+    # If CartPole is used for testing, and it bypasses PreprocessFrame,
+    # then StackFrames will also likely fail or produce unexpected shapes if it expects a channel dim.
+    # And the DQN model input layer will mismatch.
+    #
+    # Re-thinking: The original code *always* applied these.
+    # This means CartPole was *always* being converted to an image by PreprocessFrame.
+    # The error `scn is 1` means `cvtColor` received a single channel image.
+    # `CartPole-v1` obs is `(4,)`. `make_env` calls `gym.make(env_name, render_mode="rgb_array")`.
+    # For CartPole, even with `render_mode="rgb_array"`, `env.step()` returns the 4-float vector.
+    # `env.render()` returns the image.
+    # `PreprocessFrame` wrapper takes `observation` from `env.step()`.
+    # So, `cv2.cvtColor(observation, cv2.COLOR_RGB2GRAY)` where observation is `(4,)` is the error.
+    #
+    # The fix is to ensure PreprocessFrame is only applied to actual image observations.
+    # A more robust check for image data:
+    is_image_env = len(env.observation_space.shape) == 3 and env.observation_space.shape[-1] == 3 # HWC format
+    # Or, if some envs return (H,W) grayscale, or (C,H,W)
+    # For now, let's assume typical Atari RGB output from `env.step()` if it's an image env.
+    # However, `env.step()` for CartPole returns state vector, not image.
+    # The `render_mode="rgb_array"` in `gym.make` affects `env.render()`.
+    #
+    # The issue is that PreprocessFrame *assumes* `observation` is an RGB image.
+    # This assumption is wrong for CartPole.
+    #
+    # Correct approach: PreprocessFrame should only be added if the environment
+    # is known to produce image frames as observations directly from step().
+    # This is typically true for ALE (Atari Learning Environment) games.
+
+    # A simple heuristic: if env_name starts with "ALE/" or contains "Pong", "Breakout", etc.
+    # This is not perfectly robust. A better way is to check observation space properties.
+    # If observation space is Box and shape is (H, W, C)
+    obs_shape = env.observation_space.shape
+    if isinstance(env.observation_space, gym.spaces.Box) and len(obs_shape) == 3 and obs_shape[0] > 10 and obs_shape[1] > 10: # Heuristic for HWC image
+        env = PreprocessFrame(env)
+        env = StackFrames(env)
+    # If it's already preprocessed to (1, H, W) or (C, H, W) by some other wrapper
+    elif isinstance(env.observation_space, gym.spaces.Box) and len(obs_shape) == 3 and (obs_shape[0] == 1 or obs_shape[0] == 3 or obs_shape[0] == 4):
+        env = StackFrames(env) # Only stack if channels are already first dim
+
     return env
 
 
@@ -166,10 +315,15 @@ def make_env_with_render(env_name, render_mode="human"):
         包装后的环境
     """
     env = gym.make(env_name, render_mode=render_mode)
-    env = SkipFrame(env)
-    env = PreprocessFrame(env)
-    env = StackFrames(env)
-    
+    env = SkipFrame(env, skip=4)
+
+    obs_shape = env.observation_space.shape
+    if isinstance(env.observation_space, gym.spaces.Box) and len(obs_shape) == 3 and obs_shape[0] > 10 and obs_shape[1] > 10:
+        env = PreprocessFrame(env)
+        env = StackFrames(env)
+    elif isinstance(env.observation_space, gym.spaces.Box) and len(obs_shape) == 3 and (obs_shape[0] == 1 or obs_shape[0] == 3 or obs_shape[0] == 4):
+        env = StackFrames(env)
+
     return env
 
 

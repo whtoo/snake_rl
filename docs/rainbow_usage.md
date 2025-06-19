@@ -52,11 +52,21 @@ python run_training.py rainbow 1000 --use_noisy --use_distributional --prioritiz
 
 - `--use_noisy`: 启用噪声网络（替代ε-贪婪探索）
 - `--use_distributional`: 启用分布式Q学习（C51算法）
-- `--n_step`: N步学习的步数（默认3）
+- `--prioritized_replay`: 启用优先经验回放 (SumTree 기반)
 - `--n_atoms`: 分布式Q学习的原子数量（默认51）
 - `--v_min`: 值函数分布的最小值（默认-10）
 - `--v_max`: 值函数分布的最大值（默认10）
-- `--prioritized_replay`: 启用优先经验回放
+
+#### Adaptive N-step Learning 参数:
+- `--base_n_step`: 自适应N步学习的基础（最小）N值（默认3）。取代旧的 `--n_step`。
+- `--max_n_step`: 自适应N步学习的最大N值（默认10）。
+- `--adapt_n_step_freq`: 调整N值的频率（以训练步数计，默认1000）。
+- `--td_error_threshold_low`: TD误差均值低于此阈值时，尝试减少N（默认0.1）。
+- `--td_error_threshold_high`: TD误差均值高于此阈值时，尝试增加N（默认0.5）。
+
+#### Experience Augmentation 参数:
+- `--use_state_augmentation`: 启用状态（经验）增强（默认关闭）。
+- `--aug_noise_scale`: 如果使用噪声增强，此为高斯噪声的标准差（基于0-255的像素值，默认5.0）。
 
 ### 通用DQN参数
 
