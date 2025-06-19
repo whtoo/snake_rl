@@ -237,7 +237,7 @@ class PrioritizedReplayBuffer:
         rewards = torch.tensor([exp.reward for exp in batch_experiences], dtype=torch.float).unsqueeze(1)
         next_states = torch.cat([torch.FloatTensor(exp.next_state).unsqueeze(0) for exp in batch_experiences])
         dones = torch.tensor([exp.done for exp in batch_experiences], dtype=torch.float).unsqueeze(1)
-        
+
         return states, actions, rewards, next_states, dones, tree_indices, weights_tensor
     
     def update_priorities(self, tree_indices, td_errors):
@@ -288,7 +288,12 @@ class DQNAgent:
         self.epsilon_start = epsilon_start
         self.epsilon_final = epsilon_final
         self.epsilon_decay = epsilon_decay
-        self.steps_done = 0
+        self.steps_done = 0 # Tracks total environment interactions via select_action
+
+        # For logging average loss
+        self._training_updates_count = 0
+        self._loss_sum_for_logging = 0.0
+        self._log_every_n_updates = 10 # Log average loss every N training updates
     
     def select_action(self, state, evaluate=False):
         epsilon = self.epsilon_final + (self.epsilon_start - self.epsilon_final) * \
@@ -344,7 +349,17 @@ class DQNAgent:
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 10)
         self.optimizer.step()
         
-        return loss.item()
+        # Logging logic
+        current_loss = loss.item()
+        if len(self.memory) >= self.batch_size: # Ensure it was a training step
+            self._training_updates_count += 1
+            self._loss_sum_for_logging += current_loss
+            if self._training_updates_count % self._log_every_n_updates == 0 and self._training_updates_count > 0:
+                avg_loss = self._loss_sum_for_logging / self._log_every_n_updates
+                print(f"DQNAgent Update: {self._training_updates_count}, Env Interactions: {self.steps_done}, Avg Loss (last {self._log_every_n_updates} updates): {avg_loss:.4f}")
+                self._loss_sum_for_logging = 0.0
+
+        return current_loss
     
     def update_target_model(self):
         self.target_model.load_state_dict(self.model.state_dict())
@@ -673,7 +688,12 @@ class RainbowAgent(DQNAgent):
             # n_step_increment and n_step_decrement use defaults in AdaptiveNStepBuffer
         )
         self.adapt_n_step_freq = adapt_n_step_freq
-        self.training_steps_count = 0 # Counter for adapt_n_step frequency
+        # self.training_steps_count = 0 # Counter for adapt_n_step frequency - Renamed for clarity
+        self._rainbow_training_updates_count = 0 # Specific for RainbowAgent model updates
+        self._rainbow_loss_sum_for_logging = 0.0
+        # Using a fixed value, but could be made configurable via RainbowAgent.__init__ args
+        self._rainbow_log_every_n_updates = 10
+
 
         if augmentation_config:
             self.augmenter = ExperienceAugmenter(augmentation_config)
@@ -771,7 +791,7 @@ class RainbowAgent(DQNAgent):
                 td_errors = torch.abs(current_q_selected_expected - target_q_for_td_error)
             else: # Standard DQN
                 current_q_model_vals = self.model(states).gather(1, actions)
-                
+
                 next_q_values_model = self.model(next_states)
                 next_actions = next_q_values_model.max(1)[1].unsqueeze(1)
                 next_q_target_net = self.target_model(next_states).gather(1, next_actions)
@@ -796,12 +816,20 @@ class RainbowAgent(DQNAgent):
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 10)
         self.optimizer.step()
         
-        self.training_steps_count += 1
-        if self.training_steps_count % self.adapt_n_step_freq == 0:
-            self.n_step_buffer.adapt_n_step()
-            # Potentially log self.n_step_buffer.current_n_step here
+        self._rainbow_training_updates_count += 1 # Increment Rainbow specific counter
+        current_loss_item = loss.item()
+        self._rainbow_loss_sum_for_logging += current_loss_item
 
-        return loss.item()
+        if self._rainbow_training_updates_count % self._rainbow_log_every_n_updates == 0 and self._rainbow_training_updates_count > 0:
+            avg_loss = self._rainbow_loss_sum_for_logging / self._rainbow_log_every_n_updates
+            # self.steps_done is from DQNAgent, tracks total env interactions
+            print(f"RainbowAgent Update: {self._rainbow_training_updates_count}, Env Interactions: {self.steps_done}, Avg Loss (last {self._rainbow_log_every_n_updates} updates): {avg_loss:.4f}, Current N-step: {self.n_step_buffer.current_n_step}")
+            self._rainbow_loss_sum_for_logging = 0.0
+
+        if self._rainbow_training_updates_count % self.adapt_n_step_freq == 0: # Use the same counter for n-step adaptation frequency
+            self.n_step_buffer.adapt_n_step()
+
+        return current_loss_item
     
     def _compute_standard_loss(self, states, actions, rewards, next_states, dones, weights):
         q_values = self.model(states).gather(1, actions)

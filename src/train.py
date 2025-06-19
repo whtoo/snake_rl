@@ -11,10 +11,10 @@ import time
 import argparse
 from torch.utils.tensorboard import SummaryWriter
 import signal  # 新增导入
-from model import DQN, DuelingDQN, RainbowDQN
-from agent import DQNAgent, RainbowAgent
-from utils import make_env, plot_rewards
-from input_shield import input_shield_context, setup_signal_handlers
+from .model import DQN, DuelingDQN, RainbowDQN
+from .agent import DQNAgent, RainbowAgent
+from .utils import make_env, plot_rewards
+from .input_shield import input_shield_context, setup_signal_handlers
 
 
 def parse_args():
@@ -329,11 +329,15 @@ def train(args):
 
                 # 保存最佳模型
                 if eval_reward > best_avg_reward:
+                    previous_best_avg_reward = best_avg_reward
                     best_avg_reward = eval_reward
                     agent.save_model(
                         os.path.join(args.save_dir, f"best_model_{args.model}.pth")
                     )
-                    print(f"新的最佳模型已保存，评估奖励: {eval_reward:.2f}")
+                    if previous_best_avg_reward == -float("inf"):
+                        print(f"🚀 Initial best score: {best_avg_reward:.2f}. Model saved.")
+                    else:
+                        print(f"🚀 New best score! Previous: {previous_best_avg_reward:.2f}, Current: {best_avg_reward:.2f}. Model saved.")
 
             # 定期保存模型
             if episode % args.save_interval == 0:
