@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import torch.optim as optim
+import time # Ensure time is imported
 import random
 from collections import deque, namedtuple
 from .utils import ExperienceAugmenter # Import ExperienceAugmenter
@@ -64,7 +65,7 @@ class SumTree:
         """
         tree_idx = self.data_pointer + self.capacity - 1 # Calculate tree index for the current leaf
         self.data_indices[self.data_pointer] = data_buffer_idx # Store mapping from this leaf to the experience's actual buffer index
-        
+
         self.update(tree_idx, priority) # Update the tree with the new priority
 
         self.data_pointer = (self.data_pointer + 1) % self.capacity # Move pointer to the next leaf to update
@@ -218,7 +219,7 @@ class PrioritizedReplayBuffer:
             priorities_for_weights[i] = priority
 
         probs = priorities_for_weights / total_p
-        
+
         # N for IS weight calculation: number of experiences in the buffer.
         # Using self.num_experiences is accurate for both partially and fully filled buffers.
         N = self.num_experiences
@@ -294,6 +295,7 @@ class DQNAgent:
         self._training_updates_count = 0
         self._loss_sum_for_logging = 0.0
         self._log_every_n_updates = 10 # Log average loss every N training updates
+        self._last_log_print_time = time.time() # Initialize timer for batch logging
     
     def select_action(self, state, evaluate=False):
         epsilon = self.epsilon_final + (self.epsilon_start - self.epsilon_final) * \
@@ -354,10 +356,17 @@ class DQNAgent:
         if len(self.memory) >= self.batch_size: # Ensure it was a training step
             self._training_updates_count += 1
             self._loss_sum_for_logging += current_loss
-            if self._training_updates_count % self._log_every_n_updates == 0 and self._training_updates_count > 0:
+            if self._training_updates_count > 0 and self._training_updates_count % self._log_every_n_updates == 0:
                 avg_loss = self._loss_sum_for_logging / self._log_every_n_updates
-                print(f"DQNAgent Update: {self._training_updates_count}, Env Interactions: {self.steps_done}, Avg Loss (last {self._log_every_n_updates} updates): {avg_loss:.4f}")
+                current_time = time.time()
+                elapsed_time_for_log_updates = current_time - self._last_log_print_time
+
+                print(f"DQNAgent Update: {self._training_updates_count}, Env Interactions: {self.steps_done}, "
+                      f"Avg Loss (last {self._log_every_n_updates} updates): {avg_loss:.4f}, "
+                      f"Time for these {self._log_every_n_updates} updates: {elapsed_time_for_log_updates:.2f}s")
+
                 self._loss_sum_for_logging = 0.0
+                self._last_log_print_time = current_time # Reset timer
 
         return current_loss
     
@@ -693,6 +702,7 @@ class RainbowAgent(DQNAgent):
         self._rainbow_loss_sum_for_logging = 0.0
         # Using a fixed value, but could be made configurable via RainbowAgent.__init__ args
         self._rainbow_log_every_n_updates = 10
+        self._rainbow_last_log_print_time = time.time() # Initialize timer
 
 
         if augmentation_config:
@@ -820,13 +830,21 @@ class RainbowAgent(DQNAgent):
         current_loss_item = loss.item()
         self._rainbow_loss_sum_for_logging += current_loss_item
 
-        if self._rainbow_training_updates_count % self._rainbow_log_every_n_updates == 0 and self._rainbow_training_updates_count > 0:
+        if self._rainbow_training_updates_count > 0 and self._rainbow_training_updates_count % self._rainbow_log_every_n_updates == 0:
             avg_loss = self._rainbow_loss_sum_for_logging / self._rainbow_log_every_n_updates
-            # self.steps_done is from DQNAgent, tracks total env interactions
-            print(f"RainbowAgent Update: {self._rainbow_training_updates_count}, Env Interactions: {self.steps_done}, Avg Loss (last {self._rainbow_log_every_n_updates} updates): {avg_loss:.4f}, Current N-step: {self.n_step_buffer.current_n_step}")
-            self._rainbow_loss_sum_for_logging = 0.0
+            current_time = time.time()
+            elapsed_time_for_log_updates = current_time - self._rainbow_last_log_print_time
 
-        if self._rainbow_training_updates_count % self.adapt_n_step_freq == 0: # Use the same counter for n-step adaptation frequency
+            # self.steps_done is from DQNAgent, tracks total env interactions
+            print(f"RainbowAgent Update: {self._rainbow_training_updates_count}, Env Interactions: {self.steps_done}, "
+                  f"Avg Loss (last {self._rainbow_log_every_n_updates} updates): {avg_loss:.4f}, "
+                  f"Current N-step: {self.n_step_buffer.current_n_step}, "
+                  f"Time for these {self._rainbow_log_every_n_updates} updates: {elapsed_time_for_log_updates:.2f}s")
+
+            self._rainbow_loss_sum_for_logging = 0.0
+            self._rainbow_last_log_print_time = current_time # Reset timer
+
+        if self._rainbow_training_updates_count > 0 and self._rainbow_training_updates_count % self.adapt_n_step_freq == 0: # Use the same counter for n-step adaptation frequency
             self.n_step_buffer.adapt_n_step()
 
         return current_loss_item
