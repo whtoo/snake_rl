@@ -235,8 +235,13 @@ def train(args):
 
             state, _ = env.reset()
             episode_reward = 0
-            episode_loss = 0
+            # episode_loss = 0 # Replaced by episode_total_loss for clarity
             episode_steps = 0
+
+            # Initialize Per-Episode Accumulators
+            episode_total_loss = 0.0
+            episode_training_updates = 0
+            episode_start_time = time.time()
 
             done = False
             truncated = False
@@ -260,9 +265,11 @@ def train(args):
                     agent.memory.push(state, action, reward, next_state, done)
 
                 # 更新模型
-                loss = agent.update_model(current_episode=episode, total_episodes=args.episodes)
-                if loss is not None:
-                    episode_loss += loss
+                loss = agent.update_model() # Reverted: Do not pass episode info here
+                if loss is not None: # A loss value is returned if an update happened
+                    # episode_loss += loss # Replaced by episode_total_loss
+                    episode_total_loss += loss
+                    episode_training_updates += 1
 
                 # 更新目标网络
                 if total_steps % args.target_update == 0:
@@ -284,14 +291,24 @@ def train(args):
             avg_reward = np.mean(rewards[-100:])  # 最近100回合的平均奖励
             avg_rewards.append(avg_reward)
 
+            # Calculate and Print Per-Episode Log
+            episode_duration = time.time() - episode_start_time
+            avg_episode_loss = episode_total_loss / episode_training_updates if episode_training_updates > 0 else 0.0
+            model_name_str = args.model.upper()
+
+            log_message = (f"{model_name_str} (Ep: {episode}/{args.episodes}) Reward: {episode_reward:.2f}, "
+                           f"Avg Loss: {avg_episode_loss:.4f}, Duration: {episode_duration:.2f}s, "
+                           f"Env Interactions: {episode_steps}, Training Updates: {episode_training_updates}")
+            print(log_message)
+
             # 记录到TensorBoard
             writer.add_scalar("Train/Reward", episode_reward, episode)
             writer.add_scalar("Train/AvgReward", avg_reward, episode)
-            writer.add_scalar(
-                "Train/Loss",
-                episode_loss / episode_steps if episode_steps > 0 else 0,
-                episode,
-            )
+            # Update TensorBoard logging for loss to use avg_episode_loss
+            writer.add_scalar("Train/Loss", avg_episode_loss, episode)
+            writer.add_scalar("Train/EpisodeDuration", episode_duration, episode)
+            writer.add_scalar("Train/EpisodeTrainingUpdates", episode_training_updates, episode)
+
             # 计算当前epsilon值（仅对DQN有效，Rainbow使用噪声网络）
             if hasattr(agent, "epsilon_start"):
                 current_epsilon = agent.epsilon_final + (
@@ -302,24 +319,9 @@ def train(args):
                 # Rainbow使用噪声网络，epsilon固定为0
                 writer.add_scalar("Train/Epsilon", 0.0, episode)
 
-            # 打印进度
-            if episode % 10 == 0:
-                elapsed_time = time.time() - start_time
-                # 计算当前探索率显示
-                if hasattr(agent, 'epsilon_start'):
-                    current_epsilon = agent.epsilon_final + (agent.epsilon_start - agent.epsilon_final) * \
-                                    np.exp(-1. * agent.steps_done / agent.epsilon_decay)
-                    epsilon_str = f"探索率: {current_epsilon:.3f}, "
-                else:
-                    epsilon_str = "探索率: 0.000 (噪声网络), "
-                
-                print(
-                    f"回合 {episode}/{args.episodes}, "
-                    f"奖励: {episode_reward:.2f}, "
-                    f"平均奖励: {avg_reward:.2f}, "
-                    f"{epsilon_str}"
-                    f"用时: {elapsed_time:.1f}s"
-                )
+            # 打印进度 (The new detailed log replaces the old `if episode % 10 == 0` block for episode summary)
+            # The old block can be removed or kept if additional summary over 10 episodes is desired.
+            # For now, removing it as the new log prints every episode.
 
             # 评估模型
             if episode % args.eval_interval == 0:
