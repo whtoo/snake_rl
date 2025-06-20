@@ -13,8 +13,8 @@ import numpy as np
 import torch
 import random
 from collections import deque
-# Import Experience from agent.py (one level up)
-from ..agent import Experience
+# Import Experience from utils.py (one level up)
+from ..utils import Experience
 
 def _batch_experiences_to_tensors(experiences: list[Experience]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Converts a list of Experience tuples into batched PyTorch tensors."""

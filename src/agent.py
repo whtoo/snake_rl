@@ -26,8 +26,7 @@ from .utils import ExperienceAugmenter # Import ExperienceAugmenter
 from .buffers.replay_buffers import SumTree, ReplayBuffer, PrioritizedReplayBuffer
 from .buffers.n_step_buffers import NStepBuffer, AdaptiveNStepBuffer
 
-# 定义经验元组的结构
-Experience = namedtuple('Experience', ('state', 'action', 'reward', 'next_state', 'done'))
+# Experience namedtuple moved to src.utils
 
 # SumTree class removed, now imported.
 
@@ -39,7 +38,7 @@ class DQNAgent:
     """
     DQN智能体
     """
-    def __init__(self, model, target_model, env, device, 
+    def __init__(self, model, target_model, env, device,
                  buffer_size=100000, batch_size=32, gamma=0.99,
                  lr=1e-4, epsilon_start=1.0, epsilon_final=0.01,
                  epsilon_decay=10000, target_update=1000,
@@ -48,13 +47,13 @@ class DQNAgent:
         self.target_model = target_model.to(device)
         self.target_model.load_state_dict(self.model.state_dict())
         self.target_model.eval()
-        
+
         self.env = env
         self.device = device
         self.batch_size = batch_size
         self.gamma = gamma
         self.target_update = target_update
-        
+
         if prioritized_replay:
             # For PrioritizedReplayBuffer, alpha, beta_start, beta_frames are class variables or handled internally
             self.memory = PrioritizedReplayBuffer(buffer_size)
@@ -62,13 +61,13 @@ class DQNAgent:
         else:
             self.memory = ReplayBuffer(buffer_size)
             self.prioritized_replay = False
-        
+
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
         self.epsilon_start = epsilon_start
         self.epsilon_final = epsilon_final
         self.epsilon_decay = epsilon_decay
         self.steps_done = 0 # Tracks total environment interactions via select_action
-    
+
     def _prepare_batch_for_update(self):
         """Samples a batch from memory and prepares it for model update.
 
@@ -110,39 +109,39 @@ class DQNAgent:
                 return q_values.max(1)[1].item()
         else:
             return random.randrange(self.env.action_space.n)
-    
+
     def update_model(self): # Signature reverted
         prepared_batch = self._prepare_batch_for_update()
         if prepared_batch is None:
             return 0.0
         states, actions, rewards, next_states, dones, weights, update_indices = prepared_batch
-        
+
         q_values = self.model(states).gather(1, actions)
-        
+
         with torch.no_grad():
             next_q_values_model = self.model(next_states)
             next_actions = next_q_values_model.max(1)[1].unsqueeze(1)
             next_q_values_target = self.target_model(next_states).gather(1, next_actions)
             target_q_values = rewards + (1 - dones) * self.gamma * next_q_values_target
-        
+
         td_errors = torch.abs(q_values - target_q_values)
         loss = (td_errors * weights).mean() # td_errors needs to be [batch_size, 1] like weights
-        
+
         if isinstance(self.memory, PrioritizedReplayBuffer) and update_indices is not None:
             # Pass raw TD errors (detached from graph, on CPU)
             td_errors_numpy = td_errors.detach().cpu().numpy().flatten()
             self.memory.update_priorities(update_indices, td_errors_numpy)
-        
+
         self.optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 10)
         self.optimizer.step()
-        
+
         return loss.item()
-    
+
     def update_target_model(self):
         self.target_model.load_state_dict(self.model.state_dict())
-    
+
     def save_model(self, path):
         torch.save({
             'model_state_dict': self.model.state_dict(),
@@ -150,7 +149,7 @@ class DQNAgent:
             'optimizer_state_dict': self.optimizer.state_dict(),
             'steps_done': self.steps_done
         }, path)
-    
+
     def load_model(self, path):
         checkpoint = torch.load(path, weights_only=False)
         try:
@@ -204,9 +203,9 @@ class RainbowAgent(DQNAgent):
             kwargs['epsilon_decay'] = 1
         if 'prioritized_replay' not in kwargs:
             kwargs['prioritized_replay'] = True
-            
+
         super().__init__(model, target_model, env, device, **kwargs)
-        
+
         # self.n_step (from parent DQNAgent or original kwargs) is not used directly by AdaptiveNStepBuffer
         # base_n_step is now the explicit parameter for the initial/minimum N.
         self.use_noisy = use_noisy
@@ -214,7 +213,7 @@ class RainbowAgent(DQNAgent):
         self.n_atoms = n_atoms
         self.v_min = v_min
         self.v_max = v_max
-        
+
         self.n_step_buffer = AdaptiveNStepBuffer(
             base_n_step=base_n_step,
             max_n_step=max_n_step,
@@ -235,7 +234,7 @@ class RainbowAgent(DQNAgent):
         if use_distributional:
             self.delta_z = (v_max - v_min) / (n_atoms - 1)
             self.support = torch.linspace(v_min, v_max, n_atoms).to(device)
-    
+
     def select_action(self, state, evaluate=False):
         if self.use_noisy:
             with torch.no_grad():
@@ -248,7 +247,7 @@ class RainbowAgent(DQNAgent):
                 return q_values.max(1)[1].item()
         else:
             return super().select_action(state, evaluate)
-    
+
     def store_experience(self, state, action, reward, next_state, done):
         # Augment experience if augmenter is enabled
         current_state, current_action, current_reward, current_next_state, current_done = state, action, reward, next_state, done
@@ -267,7 +266,7 @@ class RainbowAgent(DQNAgent):
             for exp in remaining_exps:
                 self.memory.push(exp.state, exp.action, exp.reward, exp.next_state, exp.done)
             self.n_step_buffer.reset()
-    
+
     def update_model(self): # Signature reverted
         prepared_batch = super()._prepare_batch_for_update()
         if prepared_batch is None:
@@ -283,7 +282,7 @@ class RainbowAgent(DQNAgent):
             loss = self._compute_distributional_loss(states, actions, rewards, next_states, dones, weights)
         else:
             loss = self._compute_standard_loss(states, actions, rewards, next_states, dones, weights)
-        
+
         # Calculate TD errors for PER update and N-step adaptation
         td_errors_numpy = self._calculate_n_step_td_errors(states, actions, rewards, next_states, dones)
 
@@ -354,7 +353,7 @@ class RainbowAgent(DQNAgent):
                 td_errors_tensor = torch.abs(current_q_model_vals - target_q_for_td_error)
 
             return td_errors_tensor.detach().cpu().numpy().flatten()
-    
+
     def _compute_standard_loss(self, states, actions, rewards, next_states, dones, weights):
         q_values = self.model(states).gather(1, actions)
         with torch.no_grad():
@@ -369,29 +368,29 @@ class RainbowAgent(DQNAgent):
         # loss = (td_errors.pow(2) * weights).mean() # This is MSE like
         loss = (torch.abs(td_errors) * weights).mean() # This is MAE like, but original was also this for PER error calc
         return loss
-    
+
     def _compute_distributional_loss(self, states, actions, rewards, next_states, dones, weights):
         batch_size = states.size(0)
         current_dist_probs = self.model(states)
         current_probs_selected = current_dist_probs.gather(1, actions.unsqueeze(2).expand(-1, -1, self.n_atoms)).squeeze(1)
         current_log_probs_selected = current_probs_selected.log()
-        
+
         with torch.no_grad():
             next_dist_probs_model = self.model(next_states)
             next_q_values_model = (next_dist_probs_model * self.support.unsqueeze(0)).sum(2)
             next_actions = next_q_values_model.max(1)[1]
-            
+
             next_dist_probs_target_net = self.target_model(next_states)
             next_dist_target = next_dist_probs_target_net.gather(1, next_actions.unsqueeze(1).unsqueeze(2).expand(-1, -1, self.n_atoms)).squeeze(1)
-            
+
             rewards_exp = rewards.expand(-1, self.n_atoms)
             dones_exp = dones.expand(-1, self.n_atoms)
             support_exp = self.support.expand(batch_size, -1)
-            
+
             # Use current_n_step from adaptive buffer for discounting future rewards
             target_support = rewards_exp + (1 - dones_exp) * (self.gamma ** self.n_step_buffer.current_n_step) * support_exp
             target_support = target_support.clamp(self.v_min, self.v_max)
-            
+
             b = (target_support - self.v_min) / self.delta_z
             lower_indices = b.floor().long()
             upper_indices = b.ceil().long()

@@ -15,8 +15,8 @@
 ### 已完成的所有组件 ✅
 1. **Double DQN** - 在 [`agent.py:278-281 (in DQNAgent), also see RainbowAgent._compute_standard_loss`](src/agent.py:278) 实现
 2. **Dueling DQN** - 在 [`model.py:70-119 (DuelingDQN class), also see RainbowDQN forward method`](src/model.py:70) 实现
-3. **Prioritized Experience Replay** - 在 [`agent.py:62-152`](src/agent.py:62) 实现
-4. **Multi-step Learning** - 在 [`agent.py:360-468`](src/agent.py:360) 实现 `NStepBuffer` 类
+3. **Prioritized Experience Replay** - 在 [`src/buffers/replay_buffers.py`](src/buffers/replay_buffers.py) (SumTree, PrioritizedReplayBuffer classes) 实现
+4. **Multi-step Learning & Adaptive N-step Learning** - 在 [`src/buffers/n_step_buffers.py`](src/buffers/n_step_buffers.py) (NStepBuffer, AdaptiveNStepBuffer classes) 实现
 5. **Noisy Networks** - 在 [`model.py:125-207`](src/model.py:125) 实现 `NoisyLinear` 类
 6. **Distributional DQN** - 在 [`model.py:210-302`](src/model.py:210) 和 [`agent.py:471-789`](src/agent.py:471) 完整实现
 
@@ -46,7 +46,7 @@ return value + advantage - advantage.mean(dim=1, keepdim=True)
 **作用**: 根据 TD 误差优先采样重要经验
 **实现**: 通过 `SumTree` 数据结构实现高效的优先级存储和采样。计算经验的优先级，并使用重要性采样 (IS) 权重来校正学习更新过程中的偏差。
 ```python
-# 实现位置: agent.py (PrioritizedReplayBuffer class with SumTree)
+# 实现位置: src/buffers/replay_buffers.py (PrioritizedReplayBuffer class with SumTree)
 # SumTree.add(priority, data_idx)
 # tree_idx, priority, data_idx = SumTree.get_leaf(s)
 # IS_weights = (N * P(i))^-beta
@@ -56,14 +56,14 @@ return value + advantage - advantage.mean(dim=1, keepdim=True)
 ### 4. Multi-step Learning & Adaptive N-step Learning ✅
 **作用**: 使用 n 步回报减少偏差，并动态调整n值以适应学习阶段。
 **公式 (n-step return)**: R_t^(n) = r_t + γr_{t+1} + ... + γ^{n-1}r_{t+n-1} + γ^n max_a' Q(s_{t+n}, a')
-**实现**: 通过 `AdaptiveNStepBuffer` 类在 [`agent.py`](src/agent.py) 中实现。
+**实现**: 通过 `AdaptiveNStepBuffer` 类在 [`src/buffers/n_step_buffers.py`](src/buffers/n_step_buffers.py) 中实现。
 - **Multi-step Learning**: `AdaptiveNStepBuffer` 内部计算n-step回报。
 - **Adaptive N-step Learning**: `AdaptiveNStepBuffer` 根据近期TD误差的均值动态调整 `current_n_step`。
   - 如果平均TD误差高，增加 `n` (可能表明价值函数欠拟合，更长的轨迹有助于传播真实价值)。
   - 如果平均TD误差低，减少 `n` (价值函数较稳定，较短的n可以减少方差)。
   - `n` 的值在 `base_n_step` 和 `max_n_step` 之间调整。
 ```python
-# 实现位置: agent.py (AdaptiveNStepBuffer class)
+# 实现位置: src/buffers/n_step_buffers.py (AdaptiveNStepBuffer class)
 class AdaptiveNStepBuffer:
     def __init__(self, base_n_step, max_n_step, gamma, ...):
         self.current_n_step = base_n_step
@@ -171,24 +171,25 @@ graph LR
 ## 详细实现方案
 
 ### 1. 文件结构扩展
-
 ```
 src/
 ├── model.py                  # 扩展现有模型
 │   ├── DQN                   # 现有
-│   ├── DuelingDQN           # 现有  
-│   ├── NoisyLinear          # 新增 - 噪声线性层
-│   ├── RainbowDQN           # 新增 - Rainbow网络
-│   └── DistributionalHead   # 新增 - 分布式输出头
+│   ├── DuelingDQN            # 现有
+│   ├── NoisyLinear           # 新增 - 噪声线性层
+│   └── RainbowDQN            # 新增 - Rainbow网络
 │
-├── agent.py                 # 扩展现有智能体
-│   ├── ReplayBuffer         # 现有
-│   ├── PrioritizedReplayBuffer # 现有
-│   ├── DQNAgent             # 现有
-│   ├── NStepBuffer          # 新增 - N步缓冲区
-│   └── RainbowAgent         # 新增 - Rainbow智能体
+├── buffers/                  # 经验回放缓冲区模块 (新增目录)
+│   ├── __init__.py
+│   ├── replay_buffers.py     # SumTree, ReplayBuffer, PrioritizedReplayBuffer
+│   └── n_step_buffers.py     # NStepBuffer, AdaptiveNStepBuffer
 │
-└── train.py                 # 修改训练脚本
+├── agent.py                  # 智能体定义
+│   ├── Experience            # (namedtuple)
+│   ├── DQNAgent              # 基础DQN智能体
+│   └── RainbowAgent          # Rainbow智能体
+│
+└── train.py                  # 修改训练脚本
     └── 添加 --model rainbow 选项
 ```
 
