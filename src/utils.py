@@ -7,9 +7,13 @@ except ImportError:
     pass
 import gymnasium as gym
 import cv2
-from collections import deque
+from collections import deque, namedtuple # Modified import
 import matplotlib.pyplot as plt
 import time
+
+# Define the Experience namedtuple for storing transitions
+Experience = namedtuple("Experience", ("state", "action", "reward", "next_state", "done"))
+
 # 移除不必要的FrameStack导入，项目使用自定义的StackFrames类
 
 class ExperienceAugmenter:

@@ -7,14 +7,14 @@ import random
 # Assuming src/tests/test_sumtree_per.py, then src.agent should work if PYTHONPATH includes project root
 try:
     from src.buffers.replay_buffers import SumTree, PrioritizedReplayBuffer
-    from src.agent import Experience
+    from src.utils import Experience # Changed from src.agent
 except ImportError:
     # Fallback for different execution context (e.g. if tests are run from project root)
     import sys
     import os
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
     from src.buffers.replay_buffers import SumTree, PrioritizedReplayBuffer
-    from src.agent import Experience
+    from src.utils import Experience # Changed from src.agent
 
 
 class TestSumTree(unittest.TestCase):

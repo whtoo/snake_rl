@@ -1,4 +1,4 @@
-# Rainbow_dqn_optimizer_todo
+# Rainbow DQN 优化实现 TodoList
 
 ## Phase 1: 基础优化 (Week 1-2)
 

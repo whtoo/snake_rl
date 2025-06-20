@@ -12,8 +12,8 @@ This module includes:
 """
 import numpy as np
 from collections import deque
-# Import Experience from agent.py (one level up)
-from ..agent import Experience
+# Import Experience from utils.py (one level up)
+from ..utils import Experience
 
 def _calculate_n_step_transition_details(experience_window: deque, gamma: float, n_steps_to_take: int) -> tuple[float, any, bool, int]:
     """

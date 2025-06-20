@@ -11,7 +11,8 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
 from src.model import NoisyLinear, RainbowDQN
-from src.agent import RainbowAgent, Experience, DQNAgent
+from src.agent import RainbowAgent, DQNAgent
+from src.utils import Experience # Moved Experience import
 from src.buffers.n_step_buffers import NStepBuffer
 
 # Mock Environment for Agent tests
