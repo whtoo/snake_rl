@@ -12,12 +12,12 @@
 │   ├── agent.py             # 强化学习智能体 (DQNAgent, RainbowAgent)
 │   ├── buffers/             # 经验回放缓冲区模块
 │   │   ├── __init__.py
-│   │   ├── replay_buffers.py  # Standard & Prioritized Replay Buffers, SumTree
-│   │   └── n_step_buffers.py  # N-Step & Adaptive N-Step Buffers
+│   │   ├── replay_buffers.py  # 标准经验回放 & 优先经验回放 (包含SumTree实现)
+│   │   └── n_step_buffers.py  # N步经验回放 & 自适应N步经验回放
 │   ├── model.py             # 神经网络模型
 │   ├── train.py             # 训练脚本
 │   ├── evaluate.py          # 评估脚本
-│   └── utils.py             # 工具函数
+│   └── utils.py             # 工具函数 (环境装饰器, 经验增强器, ...)
 └── notebooks/               # Jupyter notebooks 用于实验和可视化
     └── demo.ipynb           # 演示笔记本
 ```
@@ -47,7 +47,7 @@ conda activate rl_atari
 
 ## 算法选择
 
-本项目将使用深度 Q 网络 (DQN) 算法，这是一种结合了 Q-learning 和深度神经网络的强化学习算法，特别适合处理具有高维状态空间的问题，如 Atari 游戏。
+本项目将使用深度 Q 网络 (DQN) 算法，这是一种结合了 Q-learning 和深度神经网络的强化学习算法，特别适合处理具有高维状态空间的问题，如 Atari 游戏。本项目实现了Rainbow DQN, 它在基础DQN之上集成了多种改进方法（如优先经验回放、自适应N步学习、噪声网络、分布式Q学习和Dueling架构）以提升学习效率和最终性能。
 
 ## 使用方法
 
@@ -97,11 +97,12 @@ jupyter notebook notebooks/demo.ipynb
 - [x] 模型保存和加载
 - [x] 视频录制功能
 - [x] 交互式演示笔记本
-- [x] 多步学习 (N-step Learning)
+- [x] 自适应N步学习 (Adaptive N-step Learning)
+- [x] 基础经验增强 (图像噪声) (Basic Experience Augmentation - image noise)
 - [x] Rainbow DQN (完整实现)
 - [x] 噪声网络 (Noisy Networks)
 - [x] 分布式Q学习 (Distributional DQN/C51)
-- [x] 超参数优化支持
+- [x] 丰富的可调训练参数 (Rich set of tunable training parameters)
 
 ## 待办事项
 
@@ -123,6 +124,13 @@ jupyter notebook notebooks/demo.ipynb
 | `--epsilon_decay` | 100000 | 探索率衰减帧数 |
 | `--target_update` | 1000 | 目标网络更新频率 |
 | `--prioritized_replay` | False | 是否使用优先经验回放 |
+| `--base_n_step`            | 3        | 自适应N步学习: 基础N步数                             |
+| `--max_n_step`             | 10       | 自适应N步学习: 最大N步数                             |
+| `--adapt_n_step_freq`      | 1000     | 自适应N步学习: N值调整频率 (基于训练步数)                |
+| `--td_error_threshold_low` | 0.1      | 自适应N步学习: N值降低的TD误差阈值                     |
+| `--td_error_threshold_high`| 0.5      | 自适应N步学习: N值增加的TD误差阈值                     |
+| `--use_state_augmentation` | False    | 是否启用状态增强 (当前支持高斯噪声)                  |
+| `--aug_noise_scale`        | 5.0      | 状态增强: 高斯噪声的标准差 (基于0-255像素值)         |
 
 ## 性能优化建议
 
