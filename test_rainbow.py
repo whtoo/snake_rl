@@ -8,7 +8,8 @@ Rainbow DQN 实现测试脚本
 import torch
 import numpy as np
 from src.model import RainbowDQN
-from src.agent import RainbowAgent, NStepBuffer
+from src.agent import RainbowAgent
+from src.buffers.n_step_buffers import NStepBuffer
 from src.utils import make_env
 
 def test_noisy_linear():

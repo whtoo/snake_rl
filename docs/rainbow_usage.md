@@ -86,10 +86,15 @@ src/
 ├── model.py           # 网络模型定义
 │   ├── NoisyLinear    # 噪声线性层
 │   └── RainbowDQN     # Rainbow网络架构
+│
+├── buffers/           # 经验回放缓冲区模块
+│   ├── replay_buffers.py  # SumTree, ReplayBuffer, PrioritizedReplayBuffer
+│   └── n_step_buffers.py  # NStepBuffer, AdaptiveNStepBuffer
+│
 ├── agent.py           # 智能体实现
-│   ├── NStepBuffer    # N步学习缓冲区
-│   ├── PrioritizedReplayBuffer  # 优先经验回放
+│   ├── DQNAgent       # 基础DQN智能体
 │   └── RainbowAgent   # Rainbow智能体
+│
 └── train.py           # 训练脚本
 ```
 

@@ -9,7 +9,11 @@
 ├── README.md                 # 项目说明文档
 ├── environment.yml          # Conda 环境配置文件
 ├── src/                     # 源代码目录
-│   ├── agent.py             # 强化学习智能体
+│   ├── agent.py             # 强化学习智能体 (DQNAgent, RainbowAgent)
+│   ├── buffers/             # 经验回放缓冲区模块
+│   │   ├── __init__.py
+│   │   ├── replay_buffers.py  # Standard & Prioritized Replay Buffers, SumTree
+│   │   └── n_step_buffers.py  # N-Step & Adaptive N-Step Buffers
 │   ├── model.py             # 神经网络模型
 │   ├── train.py             # 训练脚本
 │   ├── evaluate.py          # 评估脚本

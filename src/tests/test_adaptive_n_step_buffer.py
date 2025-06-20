@@ -3,12 +3,14 @@ import numpy as np
 from collections import deque
 
 try:
-    from src.agent import AdaptiveNStepBuffer, Experience
+    from src.buffers.n_step_buffers import AdaptiveNStepBuffer
+    from src.agent import Experience
 except ImportError:
     import sys
     import os
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-    from src.agent import AdaptiveNStepBuffer, Experience
+    from src.buffers.n_step_buffers import AdaptiveNStepBuffer
+    from src.agent import Experience
 
 class TestAdaptiveNStepBuffer(unittest.TestCase):
 
