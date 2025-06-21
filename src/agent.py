@@ -16,6 +16,13 @@ This module provides:
 """
 import numpy as np
 import torch
+import sys # For sys.stdout.flush() with objgraph
+
+try:
+    import objgraph
+except ImportError:
+    # print("Warning: objgraph not found in agent.py. Install with 'pip install objgraph' for memory debugging.")
+    objgraph = None
 import torch.optim as optim
 import time # Ensure time is imported
 import random
@@ -83,22 +90,28 @@ class DQNAgent:
                    or None if memory has insufficient samples.
         """
         if len(self.memory) < self.batch_size:
+            # print(f"[MEM_TRACE] DQNAgent._prepare_batch_for_update: Not enough samples in memory ({len(self.memory)} < {self.batch_size})")
             return None # Indicates not enough samples
 
+        # print(f"[MEM_TRACE] DQNAgent._prepare_batch_for_update: Before self.memory.sample()")
         if isinstance(self.memory, PrioritizedReplayBuffer):
             states, actions, rewards, next_states, dones, tree_indices, weights_tensor = self.memory.sample(self.batch_size)
+            # print(f"[MEM_TRACE] DQNAgent._prepare_batch_for_update: After PER self.memory.sample()")
             weights = weights_tensor.to(self.device)
             update_indices = tree_indices
         else:
             states, actions, rewards, next_states, dones = self.memory.sample(self.batch_size)
+            # print(f"[MEM_TRACE] DQNAgent._prepare_batch_for_update: After standard self.memory.sample()")
             update_indices = None
             weights = torch.ones_like(rewards).to(self.device) # Ensure weights is defined and on device
 
+        # print(f"[MEM_TRACE] DQNAgent._prepare_batch_for_update: Before moving batch to device: {self.device}")
         states = states.to(self.device)
         actions = actions.to(self.device)
         rewards = rewards.to(self.device)
         next_states = next_states.to(self.device)
         dones = dones.to(self.device)
+        # print(f"[MEM_TRACE] DQNAgent._prepare_batch_for_update: After moving batch to device")
 
         return states, actions, rewards, next_states, dones, weights, update_indices
 
@@ -115,8 +128,10 @@ class DQNAgent:
             return random.randrange(self.env.action_space.n)
 
     def update_model(self): # Signature reverted
+        # print(f"[MEM_TRACE] DQNAgent.update_model: Start")
         prepared_batch = self._prepare_batch_for_update()
         if prepared_batch is None:
+            # print(f"[MEM_TRACE] DQNAgent.update_model: prepared_batch is None, returning 0.0")
             return 0.0
         states, actions, rewards, next_states, dones, weights, update_indices = prepared_batch
 
@@ -136,6 +151,8 @@ class DQNAgent:
             td_errors_numpy = td_errors.detach().cpu().numpy().flatten()
             self.memory.update_priorities(update_indices, td_errors_numpy)
 
+        # print(f"[MEM_TRACE] DQNAgent.update_model: Loss calculated: {loss.item()}, before optimizer step")
+
         self.optimizer.zero_grad()
         loss.backward()
         # 使用更严格的梯度裁剪以提高训练稳定性
@@ -143,9 +160,17 @@ class DQNAgent:
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip_norm)
         self.optimizer.step()
 
+        # print(f"[MEM_TRACE] DQNAgent.update_model: End, loss={loss.item() if hasattr(loss, 'item') else loss}")
+
+        if objgraph and self.steps_done > 0 and self.steps_done % 2000 == 0: # Log every 2000 env steps
+            print(f"\n[OBJGRAPH_TRACE] DQNAgent.update_model - Object types at steps_done {self.steps_done}:")
+            objgraph.show_most_common_types(limit=20, shortnames=False)
+            sys.stdout.flush()
+
         return loss.item()
 
     def update_target_model(self):
+        # print(f"[MEM_TRACE] DQNAgent.update_target_model: Updating target model")
         self.target_model.load_state_dict(self.model.state_dict())
 
     def save_model(self, path):
@@ -336,7 +361,9 @@ class RainbowAgent(DQNAgent):
             loss = self._compute_standard_loss(states, actions, rewards, next_states, dones, weights)
 
         # Calculate TD errors for PER update and N-step adaptation
+        # print(f"[MEM_TRACE] RainbowAgent.update_model: Before _calculate_n_step_td_errors")
         td_errors_numpy = self._calculate_n_step_td_errors(states, actions, rewards, next_states, dones)
+        # print(f"[MEM_TRACE] RainbowAgent.update_model: After _calculate_n_step_td_errors, td_errors_numpy shape: {td_errors_numpy.shape if td_errors_numpy is not None else 'None'}")
 
         # Update PER priorities if applicable
         if isinstance(self.memory, PrioritizedReplayBuffer) and update_indices is not None and td_errors_numpy is not None:
@@ -344,8 +371,11 @@ class RainbowAgent(DQNAgent):
 
         # Record TD errors for N-step adaptation
         if td_errors_numpy is not None: # Ensure td_errors were computed
-             self.n_step_buffer.record_td_error(np.mean(td_errors_numpy))
+            # print(f"[MEM_TRACE] RainbowAgent.update_model: Before n_step_buffer.record_td_error")
+            self.n_step_buffer.record_td_error(np.mean(td_errors_numpy))
+            # print(f"[MEM_TRACE] RainbowAgent.update_model: After n_step_buffer.record_td_error")
 
+        # print(f"[MEM_TRACE] RainbowAgent.update_model: Loss calculated: {loss.item()}, before optimizer step (Rainbow override)") # Matches DQNAgent log point
         self.optimizer.zero_grad()
         loss.backward()
         # 使用更严格的梯度裁剪以提高训练稳定性
@@ -356,8 +386,11 @@ class RainbowAgent(DQNAgent):
         self._rainbow_training_updates_count += 1 # Increment Rainbow specific counter
 
         if self._rainbow_training_updates_count > 0 and self._rainbow_training_updates_count % self.adapt_n_step_freq == 0: # Use the same counter for n-step adaptation frequency
+            # print(f"[MEM_TRACE] RainbowAgent.update_model: Before n_step_buffer.adapt_n_step(), updates_count: {self._rainbow_training_updates_count}")
             self.n_step_buffer.adapt_n_step()
+            # print(f"[MEM_TRACE] RainbowAgent.update_model: After n_step_buffer.adapt_n_step()")
 
+        # print(f"[MEM_TRACE] RainbowAgent.update_model: End, loss={loss.item()}") # Matches DQNAgent log point
         return loss.item()
 
     def _calculate_n_step_td_errors(self, states, actions, rewards, next_states, dones):
