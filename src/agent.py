@@ -289,6 +289,27 @@ class RainbowAgent(DQNAgent):
             current_state, current_next_state = aug_s, aug_ns
             # print("DEBUG: Augmented state stored.") # For debugging
 
+        # Ensure states are NumPy arrays on CPU before storing in buffers
+        if isinstance(current_state, torch.Tensor):
+            current_state = current_state.cpu().numpy()
+        elif not isinstance(current_state, np.ndarray): # Ensure it's an ndarray if not a tensor
+            current_state = np.asarray(current_state)
+
+        if current_next_state is not None: # next_state can be None
+            if isinstance(current_next_state, torch.Tensor):
+                current_next_state = current_next_state.cpu().numpy()
+            elif not isinstance(current_next_state, np.ndarray): # Ensure it's an ndarray if not a tensor
+                current_next_state = np.asarray(current_next_state)
+
+        # Diagnostic print for state dtypes and ensure uint8
+        # print(f"Storing state dtype: {current_state.dtype}, next_state dtype: {current_next_state.dtype if current_next_state is not None else 'None'}")
+        if current_state.dtype != np.uint8:
+            # print(f"Converting state from {current_state.dtype} to uint8")
+            current_state = current_state.astype(np.uint8)
+        if current_next_state is not None and current_next_state.dtype != np.uint8:
+            # print(f"Converting next_state from {current_next_state.dtype} to uint8")
+            current_next_state = current_next_state.astype(np.uint8)
+
         n_step_exp = self.n_step_buffer.add(current_state, current_action, current_reward, current_next_state, current_done)
         if n_step_exp is not None:
             self.memory.push(n_step_exp.state, n_step_exp.action, n_step_exp.reward, n_step_exp.next_state, n_step_exp.done)
