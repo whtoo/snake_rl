@@ -207,14 +207,21 @@ def main():
                 agent.store_experience(state, action, reward, next_state, done)
                 
                 # 更新模型
-                loss = agent.update_model()
-                if loss is not None:
-                    episode_loss += loss
-                    episode_steps += 1
+                if total_steps > agent.batch_size: # Ensure buffer has enough samples for a batch
+                    # print(f"[MEM_TRACE] train_optimized.py: Before agent.update_model(), total_steps={total_steps}")
+                    loss = agent.update_model()
+                    # print(f"[MEM_TRACE] train_optimized.py: After agent.update_model(), loss={loss}, total_steps={total_steps}")
+                    if loss is not None:
+                        episode_loss += loss
+                        episode_steps += 1
+                else:
+                    loss = None # Or some other indicator that model wasn't updated
                 
                 # 更新目标网络
-                if total_steps % config['target_update'] == 0:
+                if total_steps > 0 and total_steps % config['target_update'] == 0:
+                    # print(f"[MEM_TRACE] train_optimized.py: Before agent.update_target_model(), total_steps={total_steps}")
                     agent.update_target_model()
+                    # print(f"[MEM_TRACE] train_optimized.py: After agent.update_target_model(), total_steps={total_steps}")
                 
                 state = next_state
                 episode_reward += reward

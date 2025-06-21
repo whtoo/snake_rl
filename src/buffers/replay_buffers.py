@@ -154,7 +154,7 @@ class ReplayBuffer:
 
 class PrioritizedReplayBuffer:
     epsilon = 1e-5  # Small constant added to priorities to ensure no zero priority.
-    alpha = 0.0  # DIAGNOSTIC: Set to 0.0 for uniform sampling. Was 0.6.
+    alpha = 0.6  # Exponent for converting TD errors to priorities. Controls shape of distribution.
     beta_start = 0.4  # Initial value for beta (importance-sampling exponent). Annealed towards 1.0.
     beta_frames = 100000 # Number of frames over which beta is annealed to 1.0.
 
