@@ -204,6 +204,26 @@ class RainbowAgent(DQNAgent):
         if 'prioritized_replay' not in kwargs:
             kwargs['prioritized_replay'] = True
 
+        # Remove Rainbow-specific arguments from kwargs if they were passed,
+        # especially the legacy 'n_step' which causes TypeError in DQNAgent.
+        # Named parameters in RainbowAgent's signature (like base_n_step, use_noisy)
+        # are handled by Python and won't be in kwargs if passed correctly.
+        # This primarily handles unexpected/legacy params passed via **kwargs.
+        kwargs.pop('n_step', None)
+        kwargs.pop('base_n_step', None) # Also remove if passed via kwargs instead of named param
+        kwargs.pop('max_n_step', None)  # Also remove if passed via kwargs
+        kwargs.pop('adapt_n_step_freq', None)
+        kwargs.pop('td_error_threshold_low', None)
+        kwargs.pop('td_error_threshold_high', None)
+        kwargs.pop('augmentation_config', None)
+        # use_noisy, use_distributional, n_atoms, v_min, v_max are named params,
+        # but if they were also in kwargs, good to remove.
+        # However, use_noisy modifies other kwargs, so care is needed.
+        # The main offender is 'n_step'. For others, relying on them being named params.
+        # If use_noisy was in kwargs, it would be an issue for the logic below.
+        # For now, just ensuring 'n_step' is gone is the primary fix for the TypeError.
+
+
         super().__init__(model, target_model, env, device, **kwargs)
 
         # self.n_step (from parent DQNAgent or original kwargs) is not used directly by AdaptiveNStepBuffer

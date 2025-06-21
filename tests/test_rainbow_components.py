@@ -316,20 +316,23 @@ class TestRainbowAgent(unittest.TestCase):
 
     def test_rainbow_agent_initialization_standard(self):
         model, target_model = self._create_models()
+        # Pass base_n_step instead of n_step
         agent = RainbowAgent(model, target_model, **self.agent_args,
-                             n_step=3, use_noisy=False, use_distributional=False)
+                             base_n_step=3, use_noisy=False, use_distributional=False)
         self.assertFalse(agent.use_noisy)
         self.assertFalse(agent.use_distributional)
         self.assertIsNotNone(agent.n_step_buffer)
-        self.assertEqual(agent.n_step, 3)
+        # Assert the correct attribute for n-step value
+        self.assertEqual(agent.n_step_buffer.base_n_step, 3)
         # Epsilon should be default from DQNAgent
         self.assertEqual(agent.epsilon_start, DQNAgent.epsilon_start if 'epsilon_start' not in self.agent_args else self.agent_args['epsilon_start'])
 
 
     def test_rainbow_agent_initialization_noisy(self):
         model, target_model = self._create_models(use_noisy=True)
+        # Pass base_n_step instead of n_step
         agent = RainbowAgent(model, target_model, **self.agent_args,
-                             n_step=3, use_noisy=True, use_distributional=False)
+                             base_n_step=3, use_noisy=True, use_distributional=False) # Already corrected this one, good.
         self.assertTrue(agent.use_noisy)
         # Epsilon should be disabled for noisy networks
         self.assertEqual(agent.epsilon_start, 0.0)
@@ -339,7 +342,7 @@ class TestRainbowAgent(unittest.TestCase):
         n_atoms, v_min, v_max = 51, -10, 10
         model, target_model = self._create_models(use_distributional=True, n_atoms=n_atoms, v_min=v_min, v_max=v_max)
         agent = RainbowAgent(model, target_model, **self.agent_args,
-                             n_step=3, use_noisy=False, use_distributional=True,
+                             base_n_step=3, use_noisy=False, use_distributional=True, # Changed n_step to base_n_step
                              n_atoms=n_atoms, v_min=v_min, v_max=v_max)
         self.assertTrue(agent.use_distributional)
         self.assertEqual(agent.n_atoms, n_atoms)
@@ -373,7 +376,7 @@ class TestRainbowAgent(unittest.TestCase):
 
     def test_rainbow_agent_store_experience(self):
         model, target_model = self._create_models()
-        agent = RainbowAgent(model, target_model, **self.agent_args, n_step=3)
+        agent = RainbowAgent(model, target_model, **self.agent_args, base_n_step=3) # Changed n_step to base_n_step
 
         # Mock buffers
         agent.n_step_buffer = unittest.mock.Mock(spec=NStepBuffer)
@@ -493,7 +496,7 @@ class TestStandardLoss(unittest.TestCase):
         self.env = MockEnv(action_space_n=self.n_actions, observation_shape=self.input_shape)
         self.agent = RainbowAgent(
             model=self.model, target_model=self.target_model, env=self.env, device=self.device,
-            batch_size=self.batch_size, n_step=1, gamma=0.9, prioritized_replay=False,
+            batch_size=self.batch_size, base_n_step=1, gamma=0.9, prioritized_replay=False, # Changed n_step to base_n_step
             use_distributional=False # Explicitly standard
         )
 
@@ -596,7 +599,7 @@ class TestDistributionalLoss(unittest.TestCase):
         self.env = MockEnv(action_space_n=self.n_actions, observation_shape=self.input_shape)
         self.agent = RainbowAgent(
             model=self.model, target_model=self.target_model, env=self.env, device=self.device,
-            batch_size=self.batch_size, n_step=1, gamma=0.9, prioritized_replay=False,
+            batch_size=self.batch_size, base_n_step=1, gamma=0.9, prioritized_replay=False, # Changed n_step to base_n_step
             use_distributional=True, n_atoms=self.n_atoms, v_min=self.v_min, v_max=self.v_max
         )
         self.support = self.agent.support
