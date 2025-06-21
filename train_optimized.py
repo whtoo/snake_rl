@@ -22,15 +22,10 @@ from src.agent import DQNAgent, RainbowAgent
 from src.utils import make_env, plot_rewards
 from src.input_shield import input_shield_context
 from optimized_config import OPTIMIZED_CONFIG
+import gc # For explicit garbage collection
 
 # 全局变量用于信号处理
 stop_training = False
-
-try:
-    import objgraph
-except ImportError:
-    print("Warning: objgraph not found. Install with 'pip install objgraph' for memory debugging.")
-    objgraph = None
 
 def signal_handler(signum, frame):
     global stop_training
@@ -116,7 +111,7 @@ def create_model_and_agent(model_type, config, env, device):
             env=env,
             device=device,
             buffer_size=config.get('buffer_size', 100000),
-            batch_size=32,
+            batch_size=config['batch_size'],
             gamma=config.get('gamma', 0.99),
             lr=config['lr'],
             target_update=config['target_update'],
@@ -172,11 +167,6 @@ def main():
     
     # 创建TensorBoard日志记录器
     writer = SummaryWriter(log_dir=args.log_dir)
-
-    if objgraph:
-        print("[OBJGRAPH_TRACE] Initial object types in main():")
-        objgraph.show_most_common_types(limit=20, shortnames=False)
-        sys.stdout.flush()
     
     # 训练统计
     rewards = []
@@ -287,13 +277,11 @@ def main():
                 print(f"保存模型检查点: {model_path}")
                 sys.stdout.flush()
 
-            # Objgraph logging periodically by episode
-            if objgraph and episode % 20 == 0: # Log every 20 episodes
-                print(f"\n[OBJGRAPH_TRACE] Object types at Episode {episode}, Total Steps {total_steps}:")
-                objgraph.show_most_common_types(limit=20, shortnames=False)
-                # growth = objgraph.growth(limit=10, shortnames=False) # Show growth since last call - can be noisy
-                # print(f"[OBJGRAPH_TRACE] Object growth since last call (Episode {episode}):\n{growth}")
-                sys.stdout.flush()
+            # Explicit garbage collection at the end of each episode
+            # print(f"[GC_TRACE] Collecting garbage at end of Episode {episode}, Total Steps {total_steps}")
+            gc.collect()
+            # print(f"[GC_TRACE] Garbage collection complete for Episode {episode}")
+            sys.stdout.flush() # Ensure GC messages (if any uncommented) are printed
     
     # 保存最终模型
     final_model_path = os.path.join(args.save_dir, f"final_model_{args.model}_optimized.pth")

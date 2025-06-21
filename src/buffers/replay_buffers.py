@@ -103,12 +103,13 @@ class SumTree:
         # Update max_priority if a leaf's priority (and not an internal node's sum) changes to be the new max
         if priority > self._max_priority and tree_idx >= (self.capacity - 1): # tree_idx for leaves start at capacity - 1
              self._max_priority = priority
-        
+
         # Diagnostic log for very large priorities
         if self.tree[tree_idx] > 1e10: # Log if priority exceeds 10 billion
             print(f"DEBUG: Large priority updated in SumTree: {self.tree[tree_idx]:.2e} at tree_idx {tree_idx}")
             # Potentially add sys.stdout.flush() if immediate printing is needed and not happening
-            
+
+
     def get_leaf(self, s):
         """
         Samples a leaf node based on a cumulative priority value `s`.
