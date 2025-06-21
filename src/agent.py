@@ -42,7 +42,11 @@ class DQNAgent:
                  buffer_size=100000, batch_size=32, gamma=0.99,
                  lr=1e-4, epsilon_start=1.0, epsilon_final=0.01,
                  epsilon_decay=10000, target_update=1000,
-                 prioritized_replay=False):
+                 prioritized_replay=False, huber_delta=1.0, grad_clip_norm=1.0):
+        
+        # 存储优化参数
+        self.huber_delta = huber_delta
+        self.grad_clip_norm = grad_clip_norm
         self.model = model.to(device)
         self.target_model = target_model.to(device)
         self.target_model.load_state_dict(self.model.state_dict())
@@ -134,7 +138,9 @@ class DQNAgent:
 
         self.optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 10)
+        # 使用更严格的梯度裁剪以提高训练稳定性
+        grad_clip_norm = getattr(self, 'grad_clip_norm', 1.0)
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip_norm)
         self.optimizer.step()
 
         return loss.item()
@@ -196,7 +202,8 @@ class RainbowAgent(DQNAgent):
                  td_error_threshold_high=0.5,
                  augmentation_config=None,    # For Experience Augmentation
                  use_noisy=True, use_distributional=False,
-                 n_atoms=51, v_min=-10, v_max=10, **kwargs): # Removed n_step from here, use base_n_step
+                 n_atoms=51, v_min=-10, v_max=10, 
+                 huber_delta=1.0, grad_clip_norm=1.0, **kwargs): # 添加优化参数
         if use_noisy:
             kwargs['epsilon_start'] = 0.0
             kwargs['epsilon_final'] = 0.0
@@ -226,6 +233,10 @@ class RainbowAgent(DQNAgent):
 
         super().__init__(model, target_model, env, device, **kwargs)
 
+        # 存储优化参数
+        self.huber_delta = huber_delta
+        self.grad_clip_norm = grad_clip_norm
+        
         # self.n_step (from parent DQNAgent or original kwargs) is not used directly by AdaptiveNStepBuffer
         # base_n_step is now the explicit parameter for the initial/minimum N.
         self.use_noisy = use_noisy
@@ -316,7 +327,9 @@ class RainbowAgent(DQNAgent):
 
         self.optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 10)
+        # 使用更严格的梯度裁剪以提高训练稳定性
+        grad_clip_norm = getattr(self, 'grad_clip_norm', 1.0)
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip_norm)
         self.optimizer.step()
 
         self._rainbow_training_updates_count += 1 # Increment Rainbow specific counter
@@ -382,11 +395,21 @@ class RainbowAgent(DQNAgent):
             next_q_values_target = self.target_model(next_states).gather(1, next_actions)
             # Use current_n_step from adaptive buffer for discounting future rewards
             target_q_values = rewards + (1 - dones) * (self.gamma ** self.n_step_buffer.current_n_step) * next_q_values_target
-        # td_errors = torch.abs(q_values - target_q_values) # Ensure td_errors has shape [batch_size, 1]
-        td_errors = q_values - target_q_values # Loss is (q_values - target_q_values).pow(2) * weights or huber_loss
-        # Using Huber loss might be better, but for consistency with current td_errors = abs(...)
-        # loss = (td_errors.pow(2) * weights).mean() # This is MSE like
-        loss = (torch.abs(td_errors) * weights).mean() # This is MAE like, but original was also this for PER error calc
+        
+        td_errors = q_values - target_q_values
+        
+        # 使用 Huber Loss 替代 MAE，对异常值更鲁棒
+        huber_delta = getattr(self, 'huber_delta', 1.0)
+        abs_td_errors = torch.abs(td_errors)
+        
+        # Huber Loss: 当误差小于delta时使用平方损失，大于delta时使用线性损失
+        huber_loss = torch.where(
+            abs_td_errors <= huber_delta,
+            0.5 * td_errors.pow(2),
+            huber_delta * (abs_td_errors - 0.5 * huber_delta)
+        )
+        
+        loss = (huber_loss * weights).mean()
         return loss
 
     def _compute_distributional_loss(self, states, actions, rewards, next_states, dones, weights):
