@@ -53,10 +53,9 @@ async def _stream_output(stream, prefix):
 
 async def run_training(model_type, episodes):
     """异步运行训练并实时显示日志"""
-    train_script_path = os.path.join('src', 'train.py')
-    
+    # 使用模块方式运行以避免相对导入错误
     cmd_list = [
-        'conda', 'run', '-n', 'snake_rl', 'python', train_script_path,
+        'conda', 'run', '-n', 'snake_rl', 'python', '-m', 'src.train',
         '--model', model_type,
         '--episodes', str(episodes),
         '--save_dir', 'checkpoints',

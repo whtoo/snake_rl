@@ -132,7 +132,7 @@ class NoisyLinear(nn.Module):
         factorised: 是否使用因子化噪声
     """
 
-    def __init__(self, in_features, out_features, sigma_init=0.4, factorised=True):
+    def __init__(self, in_features, out_features, sigma_init=0.2, factorised=True):
         super(NoisyLinear, self).__init__()
 
         self.in_features = in_features

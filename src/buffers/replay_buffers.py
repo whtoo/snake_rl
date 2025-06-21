@@ -229,17 +229,22 @@ class PrioritizedReplayBuffer:
             tree_indices[i] = tree_idx
             priorities_for_weights[i] = priority
 
-        probs = priorities_for_weights / total_p
+        # Add epsilon to total_p to prevent division by zero if total_p is zero
+        probs = priorities_for_weights / (total_p + 1e-8) # Added epsilon to total_p
 
         # N for IS weight calculation: number of experiences in the buffer.
         # Using self.num_experiences is accurate for both partially and fully filled buffers.
         N = self.num_experiences
-        weights = (N * probs) ** (-beta)
+
+        # Add epsilon to the base of the power to prevent (0)^(-beta) -> inf
+        weights_base = N * probs
+        weights = (weights_base + 1e-8) ** (-beta) # Added epsilon to base
 
         # Normalize weights by dividing by the maximum weight for stability
-        if weights.max() > 0:
-            weights /= weights.max()
-        else: # Handle case where all priorities (and thus probs and weights) might be zero
+        max_weight = weights.max()
+        if np.isfinite(max_weight) and max_weight > 1e-8: # Check if max_weight is valid and positive
+            weights /= max_weight
+        else: # Handle case where all priorities (and thus probs and weights) might be zero, or max_weight is problematic
             weights = np.ones_like(weights)
 
         weights_tensor = torch.tensor(weights, dtype=torch.float).unsqueeze(1)
