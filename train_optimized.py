@@ -26,6 +26,12 @@ from optimized_config import OPTIMIZED_CONFIG
 # 全局变量用于信号处理
 stop_training = False
 
+try:
+    import objgraph
+except ImportError:
+    print("Warning: objgraph not found. Install with 'pip install objgraph' for memory debugging.")
+    objgraph = None
+
 def signal_handler(signum, frame):
     global stop_training
     print("\n收到中断信号，正在安全停止训练...")
@@ -166,6 +172,11 @@ def main():
     
     # 创建TensorBoard日志记录器
     writer = SummaryWriter(log_dir=args.log_dir)
+
+    if objgraph:
+        print("[OBJGRAPH_TRACE] Initial object types in main():")
+        objgraph.show_most_common_types(limit=20, shortnames=False)
+        sys.stdout.flush()
     
     # 训练统计
     rewards = []
@@ -207,14 +218,21 @@ def main():
                 agent.store_experience(state, action, reward, next_state, done)
                 
                 # 更新模型
-                loss = agent.update_model()
-                if loss is not None:
-                    episode_loss += loss
-                    episode_steps += 1
+                if total_steps > agent.batch_size: # Ensure buffer has enough samples for a batch
+                    # print(f"[MEM_TRACE] train_optimized.py: Before agent.update_model(), total_steps={total_steps}")
+                    loss = agent.update_model()
+                    # print(f"[MEM_TRACE] train_optimized.py: After agent.update_model(), loss={loss}, total_steps={total_steps}")
+                    if loss is not None:
+                        episode_loss += loss
+                        episode_steps += 1
+                else:
+                    loss = None # Or some other indicator that model wasn't updated
                 
                 # 更新目标网络
-                if total_steps % config['target_update'] == 0:
+                if total_steps > 0 and total_steps % config['target_update'] == 0:
+                    # print(f"[MEM_TRACE] train_optimized.py: Before agent.update_target_model(), total_steps={total_steps}")
                     agent.update_target_model()
+                    # print(f"[MEM_TRACE] train_optimized.py: After agent.update_target_model(), total_steps={total_steps}")
                 
                 state = next_state
                 episode_reward += reward
@@ -267,6 +285,14 @@ def main():
                 model_path = os.path.join(args.save_dir, f"model_{args.model}_ep{episode}_optimized.pth")
                 agent.save_model(model_path)
                 print(f"保存模型检查点: {model_path}")
+                sys.stdout.flush()
+
+            # Objgraph logging periodically by episode
+            if objgraph and episode % 20 == 0: # Log every 20 episodes
+                print(f"\n[OBJGRAPH_TRACE] Object types at Episode {episode}, Total Steps {total_steps}:")
+                objgraph.show_most_common_types(limit=20, shortnames=False)
+                # growth = objgraph.growth(limit=10, shortnames=False) # Show growth since last call - can be noisy
+                # print(f"[OBJGRAPH_TRACE] Object growth since last call (Episode {episode}):\n{growth}")
                 sys.stdout.flush()
     
     # 保存最终模型
