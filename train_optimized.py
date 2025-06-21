@@ -116,7 +116,7 @@ def create_model_and_agent(model_type, config, env, device):
             env=env,
             device=device,
             buffer_size=config.get('buffer_size', 100000),
-            batch_size=config['batch_size'],
+            batch_size=32,
             gamma=config.get('gamma', 0.99),
             lr=config['lr'],
             target_update=config['target_update'],
