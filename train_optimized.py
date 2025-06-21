@@ -22,6 +22,7 @@ from src.agent import DQNAgent, RainbowAgent
 from src.utils import make_env, plot_rewards
 from src.input_shield import input_shield_context
 from optimized_config import OPTIMIZED_CONFIG
+import gc # For explicit garbage collection
 
 # 全局变量用于信号处理
 stop_training = False
@@ -110,7 +111,7 @@ def create_model_and_agent(model_type, config, env, device):
             env=env,
             device=device,
             buffer_size=config.get('buffer_size', 100000),
-            batch_size=32,
+            batch_size=config['batch_size'],
             gamma=config.get('gamma', 0.99),
             lr=config['lr'],
             target_update=config['target_update'],
@@ -275,6 +276,13 @@ def main():
                 agent.save_model(model_path)
                 print(f"保存模型检查点: {model_path}")
                 sys.stdout.flush()
+
+            # Explicit garbage collection at the end of each episode
+            if episode % 10 == 0:
+                # print(f"[GC_TRACE] Collecting garbage at end of Episode {episode}, Total Steps {total_steps}")
+                gc.collect()
+                # print(f"[GC_TRACE] Garbage collection complete for Episode {episode}")
+                sys.stdout.flush() # Ensure GC messages (if any uncommented) are printed
     
     # 保存最终模型
     final_model_path = os.path.join(args.save_dir, f"final_model_{args.model}_optimized.pth")
