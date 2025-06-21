@@ -98,8 +98,7 @@ class SumTree:
         """
         change = priority - self.tree[tree_idx]
         self.tree[tree_idx] = priority
-        # self._propagate(tree_idx, change) # DIAGNOSTIC: Disable propagation
-        # Propagate change to parent nodes
+        self._propagate(tree_idx, change) # Propagate change to parent nodes
 
         # Update max_priority if a leaf's priority (and not an internal node's sum) changes to be the new max
         if priority > self._max_priority and tree_idx >= (self.capacity - 1): # tree_idx for leaves start at capacity - 1

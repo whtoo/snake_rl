@@ -58,13 +58,16 @@ class DQNAgent:
         self.gamma = gamma
         self.target_update = target_update
 
-        if prioritized_replay:
-            # For PrioritizedReplayBuffer, alpha, beta_start, beta_frames are class variables or handled internally
-            self.memory = PrioritizedReplayBuffer(buffer_size)
-            self.prioritized_replay = True
-        else:
-            self.memory = ReplayBuffer(buffer_size)
-            self.prioritized_replay = False
+        # DIAGNOSTIC: Force standard ReplayBuffer to disable PER
+        self.memory = ReplayBuffer(buffer_size)
+        self.prioritized_replay = False
+        # if prioritized_replay:
+        #     # For PrioritizedReplayBuffer, alpha, beta_start, beta_frames are class variables or handled internally
+        #     self.memory = PrioritizedReplayBuffer(buffer_size)
+        #     self.prioritized_replay = True
+        # else:
+        #     self.memory = ReplayBuffer(buffer_size)
+        #     self.prioritized_replay = False
 
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
         self.epsilon_start = epsilon_start
@@ -85,14 +88,19 @@ class DQNAgent:
         if len(self.memory) < self.batch_size:
             return None # Indicates not enough samples
 
-        if isinstance(self.memory, PrioritizedReplayBuffer):
-            states, actions, rewards, next_states, dones, tree_indices, weights_tensor = self.memory.sample(self.batch_size)
-            weights = weights_tensor.to(self.device)
-            update_indices = tree_indices
-        else:
-            states, actions, rewards, next_states, dones = self.memory.sample(self.batch_size)
-            update_indices = None
-            weights = torch.ones_like(rewards).to(self.device) # Ensure weights is defined and on device
+        # DIAGNOSTIC: Simplified for standard ReplayBuffer
+        states, actions, rewards, next_states, dones = self.memory.sample(self.batch_size)
+        update_indices = None # No tree_indices for standard buffer
+        weights = torch.ones_like(rewards).to(self.device) # Uniform weights
+
+        # if isinstance(self.memory, PrioritizedReplayBuffer):
+        #     states, actions, rewards, next_states, dones, tree_indices, weights_tensor = self.memory.sample(self.batch_size)
+        #     weights = weights_tensor.to(self.device)
+        #     update_indices = tree_indices
+        # else:
+        #     states, actions, rewards, next_states, dones = self.memory.sample(self.batch_size)
+        #     update_indices = None
+        #     weights = torch.ones_like(rewards).to(self.device) # Ensure weights is defined and on device
 
         states = states.to(self.device)
         actions = actions.to(self.device)
@@ -129,12 +137,13 @@ class DQNAgent:
             target_q_values = rewards + (1 - dones) * self.gamma * next_q_values_target
 
         td_errors = torch.abs(q_values - target_q_values)
-        loss = (td_errors * weights).mean() # td_errors needs to be [batch_size, 1] like weights
+        loss = (td_errors * weights).mean() # td_errors needs to be [batch_size, 1] like weights. Weights are now ones.
 
-        if isinstance(self.memory, PrioritizedReplayBuffer) and update_indices is not None:
-            # Pass raw TD errors (detached from graph, on CPU)
-            td_errors_numpy = td_errors.detach().cpu().numpy().flatten()
-            self.memory.update_priorities(update_indices, td_errors_numpy)
+        # DIAGNOSTIC: PER is disabled, so no priority updates
+        # if isinstance(self.memory, PrioritizedReplayBuffer) and update_indices is not None:
+        #     # Pass raw TD errors (detached from graph, on CPU)
+        #     td_errors_numpy = td_errors.detach().cpu().numpy().flatten()
+        #     self.memory.update_priorities(update_indices, td_errors_numpy)
 
         self.optimizer.zero_grad()
         loss.backward()
