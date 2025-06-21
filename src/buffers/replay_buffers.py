@@ -104,6 +104,11 @@ class SumTree:
         if priority > self._max_priority and tree_idx >= (self.capacity - 1): # tree_idx for leaves start at capacity - 1
              self._max_priority = priority
 
+        # Diagnostic log for very large priorities
+        if self.tree[tree_idx] > 1e10: # Log if priority exceeds 10 billion
+            print(f"DEBUG: Large priority updated in SumTree: {self.tree[tree_idx]:.2e} at tree_idx {tree_idx}")
+            # Potentially add sys.stdout.flush() if immediate printing is needed and not happening
+
 
     def get_leaf(self, s):
         """
@@ -149,7 +154,7 @@ class ReplayBuffer:
 
 class PrioritizedReplayBuffer:
     epsilon = 1e-5  # Small constant added to priorities to ensure no zero priority.
-    alpha = 0.6  # Exponent for converting TD errors to priorities. Controls shape of distribution.
+    alpha = 0.0  # DIAGNOSTIC: Set to 0.0 for uniform sampling. Was 0.6.
     beta_start = 0.4  # Initial value for beta (importance-sampling exponent). Annealed towards 1.0.
     beta_frames = 100000 # Number of frames over which beta is annealed to 1.0.
 
