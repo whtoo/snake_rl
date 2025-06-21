@@ -278,10 +278,11 @@ def main():
                 sys.stdout.flush()
 
             # Explicit garbage collection at the end of each episode
-            # print(f"[GC_TRACE] Collecting garbage at end of Episode {episode}, Total Steps {total_steps}")
-            gc.collect()
-            # print(f"[GC_TRACE] Garbage collection complete for Episode {episode}")
-            sys.stdout.flush() # Ensure GC messages (if any uncommented) are printed
+            if episode % 5 == 0:
+                # print(f"[GC_TRACE] Collecting garbage at end of Episode {episode}, Total Steps {total_steps}")
+                gc.collect()
+                # print(f"[GC_TRACE] Garbage collection complete for Episode {episode}")
+                sys.stdout.flush() # Ensure GC messages (if any uncommented) are printed
     
     # 保存最终模型
     final_model_path = os.path.join(args.save_dir, f"final_model_{args.model}_optimized.pth")
