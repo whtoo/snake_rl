@@ -278,7 +278,7 @@ def main():
                 sys.stdout.flush()
 
             # Explicit garbage collection at the end of each episode
-            if episode % 5 == 0:
+            if episode % 10 == 0:
                 # print(f"[GC_TRACE] Collecting garbage at end of Episode {episode}, Total Steps {total_steps}")
                 gc.collect()
                 # print(f"[GC_TRACE] Garbage collection complete for Episode {episode}")
