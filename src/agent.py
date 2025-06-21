@@ -355,8 +355,9 @@ class RainbowAgent(DQNAgent):
 
         self._rainbow_training_updates_count += 1 # Increment Rainbow specific counter
 
-        if self._rainbow_training_updates_count > 0 and self._rainbow_training_updates_count % self.adapt_n_step_freq == 0: # Use the same counter for n-step adaptation frequency
-            self.n_step_buffer.adapt_n_step()
+        # Temporarily disable N-step adaptation for diagnosis
+        # if self._rainbow_training_updates_count > 0 and self._rainbow_training_updates_count % self.adapt_n_step_freq == 0: # Use the same counter for n-step adaptation frequency
+        #     self.n_step_buffer.adapt_n_step()
 
         return loss.item()
 

@@ -162,6 +162,7 @@ class AdaptiveNStepBuffer:
         self.td_error_history.append(abs(td_error))
 
     def adapt_n_step(self):
+        return # Temporarily disable N-step adaptation for diagnosis
         if not self.td_error_history: # or len(self.td_error_history) < some_min_samples
             return
 
